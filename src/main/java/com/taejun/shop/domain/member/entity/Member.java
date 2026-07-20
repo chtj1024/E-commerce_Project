@@ -3,12 +3,13 @@ package com.taejun.shop.domain.member.entity;
 import com.taejun.shop.domain.common.entity.BaseEntity;
 import com.taejun.shop.domain.member.enums.Role;
 import jakarta.persistence.*;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
 @Getter
-@NoArgsConstructor
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Member extends BaseEntity{
 
     @Id
@@ -32,5 +33,6 @@ public class Member extends BaseEntity{
         this.email = email;
         this.password = password;
         this.name = name;
+        this.role = Role.USER; // 역할 설정
     }
 }
