@@ -1,5 +1,9 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import axios from "axios";
+import { setApiAccessToken } from "./api/apiClient";
+import { hasAdminRole } from "./auth/jwt";
+import ProductList from "./components/ProductList";
+import ProductCreatePage from "./pages/ProductCreatePage";
 import "./App.css";
 
 const API_URL = "http://localhost:8080/api/members";
@@ -16,24 +20,49 @@ type LoginResponse = {
   accessToken: string;
 };
 
-type Page = "home" | "signup" | "login";
+type Page = "home" | "signup" | "login" | "product-create";
 
 const getPageFromPath = (): Page => {
   if (window.location.pathname === "/signup") return "signup";
   if (window.location.pathname === "/login") return "login";
+  if (window.location.pathname === "/admin/products/new") return "product-create";
   return "home";
+};
+
+const PAGE_PATHS: Record<Page, string> = {
+  home: "/",
+  signup: "/signup",
+  login: "/login",
+  "product-create": "/admin/products/new",
 };
 
 function App() {
   const [page, setPage] = useState<Page>(getPageFromPath);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const isLoggedIn = Boolean(accessToken);
+  const isAdmin = hasAdminRole(accessToken);
+
+  const applyAccessToken = (token: string | null) => {
+    setAccessToken(token);
+    setApiAccessToken(token);
+  };
 
   useEffect(() => {
-    const handlePopState = () => setPage(getPageFromPath());
+    const handlePopState = () => {
+      const requestedPage = getPageFromPath();
+
+      if (requestedPage === "product-create" && !hasAdminRole(accessToken)) {
+        window.history.replaceState({}, "", PAGE_PATHS.home);
+        setPage("home");
+        return;
+      }
+
+      setPage(requestedPage);
+    };
+
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
+  }, [accessToken]);
 
   useEffect(() => {
     let isMounted = true;
@@ -46,9 +75,24 @@ function App() {
           { timeout: 5000, withCredentials: true },
         );
 
-        if (isMounted) setAccessToken(response.data.accessToken);
+        if (isMounted) {
+          const token = response.data.accessToken;
+          applyAccessToken(token);
+
+          if (getPageFromPath() === "product-create" && !hasAdminRole(token)) {
+            window.history.replaceState({}, "", PAGE_PATHS.home);
+            setPage("home");
+          }
+        }
       } catch {
-        if (isMounted) setAccessToken(null);
+        if (isMounted) {
+          applyAccessToken(null);
+
+          if (getPageFromPath() === "product-create") {
+            window.history.replaceState({}, "", PAGE_PATHS.home);
+            setPage("home");
+          }
+        }
       }
     };
 
@@ -59,8 +103,7 @@ function App() {
   }, []);
 
   const navigate = (nextPage: Page) => {
-    const path = nextPage === "home" ? "/" : `/${nextPage}`;
-    window.history.pushState({}, "", path);
+    window.history.pushState({}, "", PAGE_PATHS[nextPage]);
     setPage(nextPage);
   };
 
@@ -71,7 +114,7 @@ function App() {
         withCredentials: true,
       });
     } finally {
-      setAccessToken(null);
+      applyAccessToken(null);
       navigate("home");
     }
   };
@@ -84,9 +127,16 @@ function App() {
         </button>
         <nav aria-label="주요 메뉴">
           {isLoggedIn ? (
-            <button className="text-button" type="button" onClick={logout}>
-              로그아웃
-            </button>
+            <>
+              {isAdmin && (
+                <button className="text-button" type="button" onClick={() => navigate("product-create")}>
+                  상품 등록
+                </button>
+              )}
+              <button className="text-button" type="button" onClick={logout}>
+                로그아웃
+              </button>
+            </>
           ) : (
             <>
               <button className="text-button" type="button" onClick={() => navigate("login")}>
@@ -105,11 +155,14 @@ function App() {
       {page === "login" && (
         <Login
           onLogin={(token) => {
-            setAccessToken(token);
+            applyAccessToken(token);
             navigate("home");
           }}
           onNavigate={navigate}
         />
+      )}
+      {page === "product-create" && isAdmin && (
+        <ProductCreatePage onBack={() => navigate("home")} />
       )}
     </div>
   );
@@ -117,25 +170,28 @@ function App() {
 
 function Home({ isLoggedIn, onNavigate }: { isLoggedIn: boolean; onNavigate: (page: Page) => void }) {
   return (
-    <main className="home">
-      <section className="hero">
-        <p className="eyebrow">EVERYDAY MARKET</p>
-        <h1>좋아하는 것을<br />더 가깝게.</h1>
-        <p className="hero-copy">일상에 필요한 좋은 물건을 편안하게 만나보세요.</p>
-        {isLoggedIn ? (
-          <div className="welcome-card"><span>로그인 완료</span><strong>오늘도 반가워요.</strong></div>
-        ) : (
-          <div className="hero-actions">
-            <button className="primary-button" type="button" onClick={() => onNavigate("signup")}>회원가입하기</button>
-            <button className="secondary-button" type="button" onClick={() => onNavigate("login")}>로그인</button>
-          </div>
-        )}
-      </section>
-      <aside className="hero-visual" aria-hidden="true">
-        <div className="orb orb-large" />
-        <div className="orb orb-small" />
-        <div className="product-card">NEW<br /><span>COLLECTION</span></div>
-      </aside>
+    <main className="home-page">
+      <div className="home">
+        <section className="hero">
+          <p className="eyebrow">EVERYDAY MARKET</p>
+          <h1>좋아하는 것을<br />더 가깝게.</h1>
+          <p className="hero-copy">일상에 필요한 좋은 물건을 편안하게 만나보세요.</p>
+          {isLoggedIn ? (
+            <div className="welcome-card"><span>로그인 완료</span><strong>오늘도 반가워요.</strong></div>
+          ) : (
+            <div className="hero-actions">
+              <button className="primary-button" type="button" onClick={() => onNavigate("signup")}>회원가입하기</button>
+              <button className="secondary-button" type="button" onClick={() => onNavigate("login")}>로그인</button>
+            </div>
+          )}
+        </section>
+        <aside className="hero-visual" aria-hidden="true">
+          <div className="orb orb-large" />
+          <div className="orb orb-small" />
+          <div className="product-card">NEW<br /><span>COLLECTION</span></div>
+        </aside>
+      </div>
+      <ProductList />
     </main>
   );
 }

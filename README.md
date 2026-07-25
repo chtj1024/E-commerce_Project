@@ -9,6 +9,10 @@
 * Java, Spring Boot
 * React, TypeScript
 
+패키지 구조 : 도메인
+
+jwt (access token, refresh token)
+
 
 
 ## 담당
