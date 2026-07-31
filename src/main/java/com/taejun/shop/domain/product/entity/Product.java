@@ -35,8 +35,12 @@ public class Product extends BaseEntity {
     @Column(nullable = false)
     private ProductStatus status;
 
-    public Product(String name, Long price, Integer stockQuantity, String description, String imageUrl) {
+    @Column(nullable = false, length = 50)
+    private String category;
+
+    public Product(String name, String category, Long price, Integer stockQuantity, String description, String imageUrl) {
         this.name = name;
+        this.category = category;
         this.price = price;
         this.stockQuantity = stockQuantity;
         this.description = description;
@@ -44,5 +48,37 @@ public class Product extends BaseEntity {
         this.status = stockQuantity == 0
                 ? ProductStatus.SOLD_OUT
                 : ProductStatus.ACTIVE;
+    }
+
+    public void update(
+            String name,
+            String category,
+            Long price,
+            String description,
+            String imageUrl
+    ) {
+        this.name = name;
+        this.category = category;
+        this.price = price;
+        this.description = description;
+        this.imageUrl = imageUrl;
+    }
+
+    public void updateStock(Integer stockQuantity) {
+        this.stockQuantity = stockQuantity;
+
+        if (stockQuantity == 0) {
+            this.status = ProductStatus.SOLD_OUT;
+        } else if (this.status == ProductStatus.SOLD_OUT) {
+            this.status = ProductStatus.ACTIVE;
+        }
+    }
+
+    public void updateStatus(ProductStatus status) {
+        if (status == ProductStatus.ACTIVE && stockQuantity == 0) {
+            throw new IllegalArgumentException("재고가 없는 상품은 판매 중으로 변경할 수 없습니다.");
+        }
+
+        this.status = status;
     }
 }

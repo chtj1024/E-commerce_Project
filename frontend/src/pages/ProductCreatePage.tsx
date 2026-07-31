@@ -8,6 +8,7 @@ type ProductCreatePageProps = {
 
 export default function ProductCreatePage({ onBack }: ProductCreatePageProps) {
   const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
   const [price, setPrice] = useState("");
   const [stockQuantity, setStockQuantity] = useState("");
   const [description, setDescription] = useState("");
@@ -39,6 +40,7 @@ export default function ProductCreatePage({ onBack }: ProductCreatePageProps) {
     try {
       const product = await createProduct({
         name: name.trim(),
+        category: category.trim(),
         price: parsedPrice,
         stockQuantity: parsedStockQuantity,
         description: description.trim(),
@@ -48,6 +50,7 @@ export default function ProductCreatePage({ onBack }: ProductCreatePageProps) {
       setMessage(`상품이 등록되었습니다. 상품 번호: ${product.id}`);
       setIsSuccess(true);
       setName("");
+      setCategory("");
       setPrice("");
       setStockQuantity("");
       setDescription("");
@@ -81,6 +84,17 @@ export default function ProductCreatePage({ onBack }: ProductCreatePageProps) {
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="예: 오버핏 코튼 셔츠"
+            />
+          </label>
+
+          <label className="field">
+            <span>카테고리</span>
+            <input
+              required
+              maxLength={50}
+              value={category}
+              onChange={(event) => setCategory(event.target.value)}
+              placeholder="예: CLOTHING"
             />
           </label>
 

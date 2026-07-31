@@ -24,7 +24,10 @@ public record ProductCreateRequest(
         String description,
 
         @Size(max = 500, message = "이미지 URL은 500자 이하여야 합니다.")
-        String imageUrl
+        String imageUrl,
 
+        @NotBlank(message = "카테고리를 입력해 주세요.")
+        @Size(max = 50, message = "카테고리는 50자 이하여야 합니다.")
+        String category
         ) {
 }

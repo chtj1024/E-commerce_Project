@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 public record ProductResponse(
         Long id,
         String name,
+        String category,
         Long price,
         Integer stockQuantity,
         String description,
@@ -21,6 +22,7 @@ public record ProductResponse(
         return new ProductResponse(
                 product.getId(),
                 product.getName(),
+                product.getCategory(),
                 product.getPrice(),
                 product.getStockQuantity(),
                 product.getDescription(),

@@ -4,6 +4,7 @@ import { setApiAccessToken } from "./api/apiClient";
 import { hasAdminRole } from "./auth/jwt";
 import ProductList from "./components/ProductList";
 import ProductCreatePage from "./pages/ProductCreatePage";
+import ProductManagementPage from "./pages/ProductManagementPage";
 import "./App.css";
 
 const API_URL = "http://localhost:8080/api/members";
@@ -20,20 +21,25 @@ type LoginResponse = {
   accessToken: string;
 };
 
-type Page = "home" | "signup" | "login" | "product-create";
+type Page = "home" | "signup" | "login" | "product-create" | "product-management";
 
 const getPageFromPath = (): Page => {
   if (window.location.pathname === "/signup") return "signup";
   if (window.location.pathname === "/login") return "login";
   if (window.location.pathname === "/admin/products/new") return "product-create";
+  if (window.location.pathname === "/admin/products") return "product-management";
   return "home";
 };
+
+const isAdminPage = (page: Page) =>
+  page === "product-create" || page === "product-management";
 
 const PAGE_PATHS: Record<Page, string> = {
   home: "/",
   signup: "/signup",
   login: "/login",
   "product-create": "/admin/products/new",
+  "product-management": "/admin/products",
 };
 
 function App() {
@@ -51,7 +57,7 @@ function App() {
     const handlePopState = () => {
       const requestedPage = getPageFromPath();
 
-      if (requestedPage === "product-create" && !hasAdminRole(accessToken)) {
+      if (isAdminPage(requestedPage) && !hasAdminRole(accessToken)) {
         window.history.replaceState({}, "", PAGE_PATHS.home);
         setPage("home");
         return;
@@ -79,7 +85,7 @@ function App() {
           const token = response.data.accessToken;
           applyAccessToken(token);
 
-          if (getPageFromPath() === "product-create" && !hasAdminRole(token)) {
+          if (isAdminPage(getPageFromPath()) && !hasAdminRole(token)) {
             window.history.replaceState({}, "", PAGE_PATHS.home);
             setPage("home");
           }
@@ -88,7 +94,7 @@ function App() {
         if (isMounted) {
           applyAccessToken(null);
 
-          if (getPageFromPath() === "product-create") {
+          if (isAdminPage(getPageFromPath())) {
             window.history.replaceState({}, "", PAGE_PATHS.home);
             setPage("home");
           }
@@ -129,8 +135,8 @@ function App() {
           {isLoggedIn ? (
             <>
               {isAdmin && (
-                <button className="text-button" type="button" onClick={() => navigate("product-create")}>
-                  상품 등록
+                <button className="text-button" type="button" onClick={() => navigate("product-management")}>
+                  상품 관리
                 </button>
               )}
               <button className="text-button" type="button" onClick={logout}>
@@ -162,7 +168,13 @@ function App() {
         />
       )}
       {page === "product-create" && isAdmin && (
-        <ProductCreatePage onBack={() => navigate("home")} />
+        <ProductCreatePage onBack={() => navigate("product-management")} />
+      )}
+      {page === "product-management" && isAdmin && (
+        <ProductManagementPage
+          onBack={() => navigate("home")}
+          onCreate={() => navigate("product-create")}
+        />
       )}
     </div>
   );
