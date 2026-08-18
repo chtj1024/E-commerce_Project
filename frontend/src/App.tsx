@@ -5,6 +5,7 @@ import { hasAdminRole } from "./auth/jwt";
 import ProductList from "./components/ProductList";
 import ProductCreatePage from "./pages/ProductCreatePage";
 import ProductManagementPage from "./pages/ProductManagementPage";
+import CartPage from "./pages/CartPage";
 import "./App.css";
 
 const API_URL = "http://localhost:8080/api/members";
@@ -21,11 +22,12 @@ type LoginResponse = {
   accessToken: string;
 };
 
-type Page = "home" | "signup" | "login" | "product-create" | "product-management";
+type Page = "home" | "signup" | "login" | "cart" | "product-create" | "product-management";
 
 const getPageFromPath = (): Page => {
   if (window.location.pathname === "/signup") return "signup";
   if (window.location.pathname === "/login") return "login";
+  if (window.location.pathname === "/cart") return "cart";
   if (window.location.pathname === "/admin/products/new") return "product-create";
   if (window.location.pathname === "/admin/products") return "product-management";
   return "home";
@@ -38,6 +40,7 @@ const PAGE_PATHS: Record<Page, string> = {
   home: "/",
   signup: "/signup",
   login: "/login",
+  cart: "/cart",
   "product-create": "/admin/products/new",
   "product-management": "/admin/products",
 };
@@ -57,7 +60,10 @@ function App() {
     const handlePopState = () => {
       const requestedPage = getPageFromPath();
 
-      if (isAdminPage(requestedPage) && !hasAdminRole(accessToken)) {
+      if (
+        (requestedPage === "cart" && !accessToken) ||
+        (isAdminPage(requestedPage) && !hasAdminRole(accessToken))
+      ) {
         window.history.replaceState({}, "", PAGE_PATHS.home);
         setPage("home");
         return;
@@ -94,7 +100,7 @@ function App() {
         if (isMounted) {
           applyAccessToken(null);
 
-          if (isAdminPage(getPageFromPath())) {
+          if (isAdminPage(getPageFromPath()) || getPageFromPath() === "cart") {
             window.history.replaceState({}, "", PAGE_PATHS.home);
             setPage("home");
           }
@@ -134,6 +140,9 @@ function App() {
         <nav aria-label="주요 메뉴">
           {isLoggedIn ? (
             <>
+              <button className="text-button" type="button" onClick={() => navigate("cart")}>
+                장바구니
+              </button>
               {isAdmin && (
                 <button className="text-button" type="button" onClick={() => navigate("product-management")}>
                   상품 관리
@@ -166,6 +175,9 @@ function App() {
           }}
           onNavigate={navigate}
         />
+      )}
+      {page === "cart" && isLoggedIn && (
+        <CartPage onBack={() => navigate("home")} />
       )}
       {page === "product-create" && isAdmin && (
         <ProductCreatePage onBack={() => navigate("product-management")} />
@@ -203,7 +215,10 @@ function Home({ isLoggedIn, onNavigate }: { isLoggedIn: boolean; onNavigate: (pa
           <div className="product-card">NEW<br /><span>COLLECTION</span></div>
         </aside>
       </div>
-      <ProductList />
+      <ProductList
+        isLoggedIn={isLoggedIn}
+        onLoginRequired={() => onNavigate("login")}
+      />
     </main>
   );
 }

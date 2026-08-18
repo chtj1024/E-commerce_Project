@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { getProducts, type ProductSort } from "../api/productApi";
+import { addCartItem } from "../api/cartApi";
 import type {
   PageResponse,
   ProductResponse,
@@ -42,7 +43,15 @@ function getInitialCondition(): ProductSearchCondition {
   };
 }
 
-export default function ProductList() {
+type ProductListProps = {
+  isLoggedIn: boolean;
+  onLoginRequired: () => void;
+};
+
+export default function ProductList({
+  isLoggedIn,
+  onLoginRequired,
+}: ProductListProps) {
   const [initialCondition] = useState(getInitialCondition);
   const [products, setProducts] = useState<ProductResponse[]>([]);
   const [page, setPage] = useState(getInitialPage);
@@ -61,6 +70,27 @@ export default function ProductList() {
     useState<PageResponse<ProductResponse> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [cartMessage, setCartMessage] = useState("");
+  const [addingProductId, setAddingProductId] = useState<number | null>(null);
+
+  const handleAddToCart = async (product: ProductResponse) => {
+    if (!isLoggedIn) {
+      onLoginRequired();
+      return;
+    }
+
+    setAddingProductId(product.id);
+    setCartMessage("");
+
+    try {
+      await addCartItem({ productId: product.id, quantity: 1 });
+      setCartMessage(`${product.name} 상품을 장바구니에 담았습니다.`);
+    } catch {
+      setCartMessage("장바구니에 담지 못했습니다. 상품 재고를 확인해 주세요.");
+    } finally {
+      setAddingProductId(null);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -240,6 +270,9 @@ export default function ProductList() {
       {errorMessage && (
         <p className="product-state error" role="alert">{errorMessage}</p>
       )}
+      {cartMessage && (
+        <p className="cart-feedback" role="status">{cartMessage}</p>
+      )}
       {!isLoading && !errorMessage && products.length === 0 && (
         <p className="product-state">검색 조건에 해당하는 상품이 없습니다.</p>
       )}
@@ -274,6 +307,21 @@ export default function ProductList() {
                       : `재고 ${product.stockQuantity}개`}
                   </span>
                 </div>
+                <button
+                  className="add-cart-button"
+                  type="button"
+                  disabled={
+                    product.status !== "ACTIVE" ||
+                    addingProductId === product.id
+                  }
+                  onClick={() => void handleAddToCart(product)}
+                >
+                  {addingProductId === product.id
+                    ? "담는 중..."
+                    : product.status === "SOLD_OUT"
+                      ? "품절"
+                      : "장바구니 담기"}
+                </button>
               </div>
             </article>
           ))}

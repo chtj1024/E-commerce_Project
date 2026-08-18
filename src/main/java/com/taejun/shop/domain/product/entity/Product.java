@@ -16,6 +16,10 @@ public class Product extends BaseEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Version // 낙관적 락
+    @Column(nullable = false)
+    private Long version = 0L;
+
     @Column(nullable = false, length = 100)
     private String name;
 

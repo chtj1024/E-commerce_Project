@@ -48,7 +48,14 @@ export default function ProductManagementPage({ onBack, onCreate }: Props) {
         setProducts(response);
         setStockDrafts(Object.fromEntries(response.map((product) => [product.id, String(product.stockQuantity)])));
       } catch (error) {
-        if (isMounted) showError(error, "상품 목록을 불러오지 못했습니다.");
+        if (isMounted) {
+          setIsSuccess(false);
+          setMessage(
+            axios.isAxiosError(error) && error.response?.status === 403
+              ? "상품을 관리할 권한이 없습니다."
+              : "상품 목록을 불러오지 못했습니다.",
+          );
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -116,7 +123,7 @@ export default function ProductManagementPage({ onBack, onCreate }: Props) {
   };
 
   const removeProduct = async (product: ProductResponse) => {
-    if (!window.confirm(`\"${product.name}\" 상품을 삭제하시겠습니까?`)) return;
+    if (!window.confirm(`"${product.name}" 상품을 삭제하시겠습니까?`)) return;
 
     setBusyId(product.id);
     try {
