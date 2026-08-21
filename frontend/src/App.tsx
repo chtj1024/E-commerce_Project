@@ -6,6 +6,8 @@ import ProductList from "./components/ProductList";
 import ProductCreatePage from "./pages/ProductCreatePage";
 import ProductManagementPage from "./pages/ProductManagementPage";
 import CartPage from "./pages/CartPage";
+import OrderPendingPage from "./pages/OrderPendingPage";
+import type { OrderResponse } from "./types/order";
 import "./App.css";
 
 const API_URL = "http://localhost:8080/api/members";
@@ -22,12 +24,36 @@ type LoginResponse = {
   accessToken: string;
 };
 
-type Page = "home" | "signup" | "login" | "cart" | "product-create" | "product-management";
+type Page =
+  | "home"
+  | "signup"
+  | "login"
+  | "cart"
+  | "order-pending"
+  | "product-create"
+  | "product-management";
+
+const PENDING_ORDER_STORAGE_KEY = "shop.pending-order";
+
+const getOrderIdFromPath = (): number | null => {
+  const match = window.location.pathname.match(/^\/orders\/(\d+)$/);
+  return match ? Number(match[1]) : null;
+};
+
+const getStoredPendingOrder = (): OrderResponse | null => {
+  try {
+    const storedOrder = window.sessionStorage.getItem(PENDING_ORDER_STORAGE_KEY);
+    return storedOrder ? (JSON.parse(storedOrder) as OrderResponse) : null;
+  } catch {
+    return null;
+  }
+};
 
 const getPageFromPath = (): Page => {
   if (window.location.pathname === "/signup") return "signup";
   if (window.location.pathname === "/login") return "login";
   if (window.location.pathname === "/cart") return "cart";
+  if (getOrderIdFromPath() !== null) return "order-pending";
   if (window.location.pathname === "/admin/products/new") return "product-create";
   if (window.location.pathname === "/admin/products") return "product-management";
   return "home";
@@ -36,11 +62,15 @@ const getPageFromPath = (): Page => {
 const isAdminPage = (page: Page) =>
   page === "product-create" || page === "product-management";
 
+const isAuthenticatedPage = (page: Page) =>
+  page === "cart" || page === "order-pending" || isAdminPage(page);
+
 const PAGE_PATHS: Record<Page, string> = {
   home: "/",
   signup: "/signup",
   login: "/login",
   cart: "/cart",
+  "order-pending": "/",
   "product-create": "/admin/products/new",
   "product-management": "/admin/products",
 };
@@ -48,6 +78,9 @@ const PAGE_PATHS: Record<Page, string> = {
 function App() {
   const [page, setPage] = useState<Page>(getPageFromPath);
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [pendingOrder, setPendingOrder] = useState<OrderResponse | null>(
+    getStoredPendingOrder,
+  );
   const isLoggedIn = Boolean(accessToken);
   const isAdmin = hasAdminRole(accessToken);
 
@@ -61,7 +94,7 @@ function App() {
       const requestedPage = getPageFromPath();
 
       if (
-        (requestedPage === "cart" && !accessToken) ||
+        (isAuthenticatedPage(requestedPage) && !accessToken) ||
         (isAdminPage(requestedPage) && !hasAdminRole(accessToken))
       ) {
         window.history.replaceState({}, "", PAGE_PATHS.home);
@@ -100,7 +133,7 @@ function App() {
         if (isMounted) {
           applyAccessToken(null);
 
-          if (isAdminPage(getPageFromPath()) || getPageFromPath() === "cart") {
+          if (isAuthenticatedPage(getPageFromPath())) {
             window.history.replaceState({}, "", PAGE_PATHS.home);
             setPage("home");
           }
@@ -126,6 +159,8 @@ function App() {
         withCredentials: true,
       });
     } finally {
+      window.sessionStorage.removeItem(PENDING_ORDER_STORAGE_KEY);
+      setPendingOrder(null);
       applyAccessToken(null);
       navigate("home");
     }
@@ -177,7 +212,29 @@ function App() {
         />
       )}
       {page === "cart" && isLoggedIn && (
-        <CartPage onBack={() => navigate("home")} />
+        <CartPage
+          onBack={() => navigate("home")}
+          onOrderCreated={(order) => {
+            window.sessionStorage.setItem(
+              PENDING_ORDER_STORAGE_KEY,
+              JSON.stringify(order),
+            );
+            setPendingOrder(order);
+            window.history.pushState({}, "", `/orders/${order.orderId}`);
+            setPage("order-pending");
+          }}
+        />
+      )}
+      {page === "order-pending" && isLoggedIn && (
+        <OrderPendingPage
+          orderId={getOrderIdFromPath()}
+          order={
+            pendingOrder?.orderId === getOrderIdFromPath()
+              ? pendingOrder
+              : null
+          }
+          onBack={() => navigate("home")}
+        />
       )}
       {page === "product-create" && isAdmin && (
         <ProductCreatePage onBack={() => navigate("product-management")} />

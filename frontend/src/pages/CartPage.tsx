@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
+import axios from "axios";
 import {
   deleteCartItem,
   getCartItems,
   updateCartItemQuantity,
 } from "../api/cartApi";
+import { createOrder } from "../api/orderApi";
 import type { CartItemResponse } from "../types/cart";
+import type { OrderResponse } from "../types/order";
 
 const wonFormatter = new Intl.NumberFormat("ko-KR", {
   style: "currency",
@@ -14,13 +17,15 @@ const wonFormatter = new Intl.NumberFormat("ko-KR", {
 
 type CartPageProps = {
   onBack: () => void;
+  onOrderCreated: (order: OrderResponse) => void;
 };
 
-export default function CartPage({ onBack }: CartPageProps) {
+export default function CartPage({ onBack, onOrderCreated }: CartPageProps) {
   const [items, setItems] = useState<CartItemResponse[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [pendingItemId, setPendingItemId] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isOrdering, setIsOrdering] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -92,6 +97,37 @@ export default function CartPage({ onBack }: CartPageProps) {
     (total, item) => total + item.totalPrice,
     0,
   );
+
+  const submitOrder = async () => {
+    if (items.length === 0 || isOrdering) return;
+
+    setIsOrdering(true);
+    setErrorMessage("");
+
+    try {
+      const order = await createOrder({
+        items: items.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+        })),
+      });
+
+      setItems([]);
+      onOrderCreated(order);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 409) {
+        setErrorMessage(
+          "주문 중 재고가 변경되었습니다. 장바구니 수량을 다시 확인해 주세요.",
+        );
+      } else if (axios.isAxiosError(error) && error.response?.status === 401) {
+        setErrorMessage("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+      } else {
+        setErrorMessage("주문을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      }
+    } finally {
+      setIsOrdering(false);
+    }
+  };
 
   return (
     <main className="cart-page">
@@ -187,6 +223,14 @@ export default function CartPage({ onBack }: CartPageProps) {
                 <span>총 결제 예정 금액</span>
                 <strong>{wonFormatter.format(cartTotal)}</strong>
               </div>
+              <button
+                className="primary-button order-button"
+                type="button"
+                disabled={isOrdering || pendingItemId !== null}
+                onClick={() => void submitOrder()}
+              >
+                {isOrdering ? "주문 생성 중..." : "주문하기"}
+              </button>
             </aside>
           </div>
         )}

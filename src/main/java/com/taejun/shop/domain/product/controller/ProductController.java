@@ -2,6 +2,8 @@ package com.taejun.shop.domain.product.controller;
 
 import com.taejun.shop.domain.product.dto.*;
 import com.taejun.shop.domain.product.service.ProductService;
+import com.taejun.shop.global.exception.CustomException;
+import com.taejun.shop.global.exception.ErrorCode;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -54,9 +56,9 @@ public class ProductController {
                     Sort.Order.desc("createdAt"),
                     Sort.Order.desc("id")
             );
-            default -> throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "지원하지 않는 방식입니다."
+            default -> throw new CustomException(
+                    ErrorCode.INVALID_INPUT_VALUE,
+                    "지원하지 않는 정렬 방식입니다."
             );
         };
 
@@ -65,10 +67,9 @@ public class ProductController {
         try {
             condition = new ProductSearchCondition(keyword, category, minPrice, maxPrice);
         } catch (IllegalArgumentException exception) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    exception.getMessage(),
-                    exception
+            throw new CustomException(
+                    ErrorCode.INVALID_INPUT_VALUE,
+                    exception.getMessage()
             );
         }
 

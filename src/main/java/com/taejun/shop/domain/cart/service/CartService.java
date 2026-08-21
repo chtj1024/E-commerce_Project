@@ -11,6 +11,8 @@ import com.taejun.shop.domain.member.repository.MemberRepository;
 import com.taejun.shop.domain.product.entity.Product;
 import com.taejun.shop.domain.product.enums.ProductStatus;
 import com.taejun.shop.domain.product.repository.ProductRepository;
+import com.taejun.shop.global.exception.CustomException;
+import com.taejun.shop.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -48,14 +50,13 @@ public class CartService {
 
         Product product = productRepository
                 .findById(request.productId())
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "상품을 찾을 수 없습니다."
-                ));
+                .orElseThrow(() ->
+                        new CustomException(ErrorCode.PRODUCT_NOT_FOUND)
+                );
 
         if (product.getStatus() != ProductStatus.ACTIVE) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new CustomException(
+                    ErrorCode.PRODUCT_NOT_ACTIVE,
                     "현재 판매 중인 상품만 담을 수 있습니다."
             );
         }
@@ -122,10 +123,9 @@ public class CartService {
 
     private Member getMember(String email) {
         return memberRepository.findByEmail(email)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.UNAUTHORIZED,
-                        "로그인이 필요합니다."
-                ));
+                .orElseThrow(() ->
+                        new CustomException(ErrorCode.MEMBER_NOT_FOUND)
+                );
     }
 
     private CartItem getCartItem(
@@ -134,10 +134,9 @@ public class CartService {
     ) {
         return cartItemRepository
                 .findByIdAndMemberId(cartItemId, memberId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "장바구니 상품을 찾을 수 없습니다."
-                ));
+                .orElseThrow(() ->
+                        new CustomException(ErrorCode.CART_ITEM_NOT_FOUND)
+                );
     }
 
     private void validateStock(
@@ -145,8 +144,8 @@ public class CartService {
             int quantity
     ) {
         if (quantity > product.getStockQuantity()) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
+            throw new CustomException(
+                    ErrorCode.INSUFFICIENT_STOCK,
                     "상품 재고보다 많이 담을 수 없습니다."
             );
         }

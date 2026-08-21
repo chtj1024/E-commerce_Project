@@ -4,6 +4,8 @@ import com.taejun.shop.domain.product.dto.*;
 import com.taejun.shop.domain.product.entity.Product;
 import com.taejun.shop.domain.product.repository.ProductRepository;
 import com.taejun.shop.domain.product.repository.ProductRepositoryCustom;
+import com.taejun.shop.global.exception.CustomException;
+import com.taejun.shop.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -103,9 +105,8 @@ public class ProductService {
 
     private Product findProduct(Long productId) {
         return productRepository.findById(productId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        NOT_FOUND,
-                        "상품을 찾을 수 없습니다."
-                ));
+                .orElseThrow(() ->
+                        new CustomException(ErrorCode.PRODUCT_NOT_FOUND)
+                );
     }
 }

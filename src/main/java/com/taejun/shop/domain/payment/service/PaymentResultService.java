@@ -6,12 +6,16 @@ import com.taejun.shop.domain.order.enums.OrderStatus;
 import com.taejun.shop.domain.order.repository.OrderRepository;
 import com.taejun.shop.domain.order.service.OrderService;
 import com.taejun.shop.domain.product.repository.ProductRepository;
+import com.taejun.shop.global.exception.CustomException;
+import com.taejun.shop.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PaymentResultService {
@@ -31,18 +35,17 @@ public class PaymentResultService {
 
         if (updatedRows == 0) {
             CustomerOrder order = orderRepository.findById(orderId)
-                    .orElseThrow(() -> new ResponseStatusException(
-                            HttpStatus.NOT_FOUND,
-                            "주문을 찾을 수 없습니다."
-                    ));
+                    .orElseThrow(() ->
+                            new CustomException(ErrorCode.ORDER_NOT_FOUND)
+                    );
 
             if (order.getStatus() == OrderStatus.PAID) {
                 return;
             }
 
             // 결제가 승인됐을 수 있으므로 PG 결제 취소/환불 요청
-            throw new ResponseStatusException(
-                    HttpStatus.CONFLICT,
+            throw new CustomException(
+                    ErrorCode.ORDER_ALREADY_CLOSED,
                     "이미 종료된 주문입니다. 승인된 결제가 있다면 취소해야 합니다."
             );
         }
@@ -64,10 +67,9 @@ public class PaymentResultService {
         // 재고 롤백/복구 로직 : 결제 실패
 
         CustomerOrder order = orderRepository.findWithItemsById(orderId)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "주문을 찾을 수 없습니다."
-                ));
+                .orElseThrow(() ->
+                        new CustomException(ErrorCode.ORDER_NOT_FOUND)
+                );
 
         for (OrderItem item : order.getOrderItems()) {
             int restoredRows = productRepository.restoreStock(
@@ -76,9 +78,14 @@ public class PaymentResultService {
             );
 
             if (restoredRows != 1) {
-                throw new IllegalArgumentException(
-                        "재고 복구에 실패했습니다. productId=" + item.getProductId()
+                log.error(
+                        "상품 재고 복구 실패. orderId={}, productId={}, quantity={}",
+                        orderId,
+                        item.getProductId(),
+                        item.getQuantity()
                 );
+
+                throw new CustomException(ErrorCode.STOCK_RESTORE_FAILED);
             }
 
 

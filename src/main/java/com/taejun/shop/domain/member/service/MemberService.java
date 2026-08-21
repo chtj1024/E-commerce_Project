@@ -1,8 +1,13 @@
 package com.taejun.shop.domain.member.service;
 
-import com.taejun.shop.domain.member.dto.*;
+import com.taejun.shop.domain.member.dto.LoginTokenResult;
+import com.taejun.shop.domain.member.dto.MemberLoginRequest;
+import com.taejun.shop.domain.member.dto.MemberSignupRequest;
+import com.taejun.shop.domain.member.dto.MemberSignupResponse;
 import com.taejun.shop.domain.member.entity.Member;
 import com.taejun.shop.domain.member.repository.MemberRepository;
+import com.taejun.shop.global.exception.CustomException;
+import com.taejun.shop.global.exception.ErrorCode;
 import com.taejun.shop.global.security.jwt.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -22,7 +27,7 @@ public class MemberService {
     @Transactional
     public MemberSignupResponse signup(MemberSignupRequest request) {
         if (memberRepository.existsByEmail(request.email())) {
-            throw new IllegalArgumentException("이미 가입된 이메일입니다.");
+            throw new CustomException(ErrorCode.DUPLICATE_EMAIL);
         }
 
         Member member = new Member(
@@ -39,14 +44,13 @@ public class MemberService {
     @Transactional
     public LoginTokenResult login(MemberLoginRequest request) {
         Member member = memberRepository.findByEmail(request.email())
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.UNAUTHORIZED,
-                        "이메일 또는 비밀번호가 올바르지 않습니다."));
+                .orElseThrow(() ->
+                        new CustomException(ErrorCode.INVALID_LOGIN_CREDENTIALS)
+                );
 
         if (!passwordEncoder.matches(request.password(), member.getPassword())) {
-            throw new ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED,
-                    "이메일 또는 비밀번호가 올바르지 않습니다."
+            throw new CustomException(
+                    ErrorCode.INVALID_LOGIN_CREDENTIALS
             );
         }
 
@@ -64,24 +68,20 @@ public class MemberService {
     @Transactional
     public LoginTokenResult refresh(String refreshToken) {
         if (refreshToken == null || !jwtTokenProvider.isRefreshToken(refreshToken)) {
-            throw new ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED,
-                    "유효하지 않은 refresh token입니다."
-            );
+            throw new CustomException(ErrorCode.INVALID_REFRESH_TOKEN);
         }
 
         String email = jwtTokenProvider.getEmail(refreshToken);
 
         Member member = memberRepository.findByEmail(email)
-                .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.UNAUTHORIZED,
-                        "존재하지 않는 회원입니다."
-                ));
+                .orElseThrow(() ->
+                        new CustomException(ErrorCode.MEMBER_NOT_FOUND)
+                );
 
         if (!refreshToken.equals(member.getRefreshToken())) {
-            throw new ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED,
-                    "만료되어썩나 로그아웃된 refresh token입니다."
+            throw new CustomException(
+                    ErrorCode.INVALID_REFRESH_TOKEN,
+                    "만료되었거나 로그아웃된 refresh token입니다."
             );
         }
 
