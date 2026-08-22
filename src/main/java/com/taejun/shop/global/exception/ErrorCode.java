@@ -19,6 +19,16 @@ public enum ErrorCode {
             "COMMON_002",
             "서버 내부 오류가 발생했습니다."
     ),
+    AUTHENTICATION_REQUIRED(
+            HttpStatus.UNAUTHORIZED,
+            "SECURITY_001",
+            "인증이 필요합니다."
+    ),
+    ACCESS_DENIED(
+            HttpStatus.FORBIDDEN,
+            "SECURITY_002",
+            "접근 권한이 없습니다."
+    ),
 
     // 회원
     DUPLICATE_EMAIL(

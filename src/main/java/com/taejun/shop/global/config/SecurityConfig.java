@@ -1,11 +1,15 @@
 package com.taejun.shop.global.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.taejun.shop.global.exception.ErrorCode;
+import com.taejun.shop.global.exception.ErrorResponse;
 import com.taejun.shop.global.security.jwt.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -15,6 +19,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Configuration
@@ -23,6 +28,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final ObjectMapper objectMapper;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -43,12 +49,19 @@ public class SecurityConfig {
                 .formLogin(formLogin -> formLogin.disable())
                 .httpBasic(httpBasic -> httpBasic.disable())
                 .exceptionHandling(exception -> exception
-                        .authenticationEntryPoint((request, response, authException) ->
-                                response.sendError(
-                                        HttpStatus.UNAUTHORIZED.value(),
-                                        "인증이 필요합니다."
-                                )
-                        )
+                        .authenticationEntryPoint((request, response, authException) -> {
+                                    response.setStatus(HttpStatus.UNAUTHORIZED.value());
+                                    response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+                                    response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+
+                                    objectMapper.writeValue(
+                                            response.getOutputStream(),
+                                            ErrorResponse.of(
+                                                    ErrorCode.AUTHENTICATION_REQUIRED,
+                                                    request.getRequestURI()
+                                            )
+                                    );
+                        })
                 )
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
@@ -56,7 +69,10 @@ public class SecurityConfig {
                                 "/api/members/login",
                                 "/api/members/refresh",
                                 "/api/members/logout",
+                                "/swagger-ui.html",
                                 "/swagger-ui/**",
+                                "/v3/api-docs",
+                                "/v3/api-docs.yaml",
                                 "/v3/api-docs/**"
                         ).permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()

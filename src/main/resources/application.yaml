@@ -23,3 +23,15 @@ jwt:
   secret: ${JWT_SECRET}
   access-token-expiration: 3600000
   refresh-token-expiration: 1209600000
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    display-request-duration: true
+
+  default-consumes-media-type: application/json
+  default-produces-media-type: application/json
