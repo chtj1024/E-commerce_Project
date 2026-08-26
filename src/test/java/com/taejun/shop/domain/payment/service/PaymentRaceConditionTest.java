@@ -115,7 +115,7 @@ public class PaymentRaceConditionTest extends IntegrationTestSupport {
                     .getStockQuantity();
 
             // 동시성 처리 검증 : 조건부 update
-            // 결제 성공이면 재고 차감, 만료 처리면 재고 복
+            // 결제 성공이면 재고 차감, 만료 처리면 재고 복구
             if (result.getStatus() == OrderStatus.PAID) {
                 assertThat(finalStock).isEqualTo(7);
             } else {
