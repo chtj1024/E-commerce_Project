@@ -1,6 +1,6 @@
 # Shop — 이커머스 주문·결제 시스템
 
-동시 주문과 결제 과정에서 발생할 수 있는 **재고 및 주문 상태의 정합성 문제**를 중심으로 설계한 Spring Boot 기반 이커머스 프로젝트입니다.
+동시 주문과 결제 과정에서 발생할 수 있는 **재고 및 주문 상태의 정합성 문제**를 중심으로 설계하고, Redis 캐시와 k6 부하 테스트로 상품 조회 경로를 개선·검증한 Spring Boot 기반 이커머스 프로젝트입니다. 동일 키의 동시 캐시 미스를 병합해 캐시 스탬피드를 완화하고, Redis 장애가 상품 조회와 DB 변경 작업의 장애로 전파되지 않도록 Look-aside Fallback을 구성했습니다.
 
 회원, 상품, 장바구니, 주문 기능을 구현했으며, 조건부 UPDATE와 멱등성 있는 상태 전이를 적용해 재고 초과 판매, 결제 결과 중복 호출, 결제 완료와 주문 만료의 경합 상황을 처리했습니다. 핵심 시나리오는 Testcontainers의 MySQL 환경에서 통합 테스트와 멀티스레드 동시성 테스트로 검증했습니다.
 
@@ -11,7 +11,7 @@
 | 개발 기간 | 2026.04 ~ 2026.07 |
 | 개발 인원 | 1명 |
 | 담당 범위 | 백엔드 설계·구현, 테스트 및 프론트엔드 구현 |
-| 주요 관심사 | 주문·결제 동시성, 데이터 정합성, 인증·인가, 동적 검색 |
+| 주요 관심사 | 주문·결제 동시성, 데이터 정합성, 캐시 안정성, 인증·인가, 동적 검색 |
 
 ## 기술 스택
 
@@ -23,6 +23,7 @@
 - Spring Security
 - QueryDSL
 - JWT
+- Redis Cache
 - Gradle
 
 ### Database & Test
@@ -31,6 +32,7 @@
 - JUnit 5
 - Spring Boot Test
 - Testcontainers
+- k6
 
 ### Frontend
 
@@ -47,6 +49,8 @@
 - 사용자·관리자 역할 기반 접근 제어
 - 상품 등록·수정·상태 및 재고 관리
 - 키워드·카테고리·가격 범위 기반 상품 복합 검색
+- Redis 기반 상품 단건 조회 캐시, 동일 키 동시 미스 병합 및 키 단위 무효화
+- Redis 조회·저장·무효화 실패 시 MySQL 원본 데이터와 DB 작업을 우선하는 Look-aside Fallback
 - 장바구니 상품 추가·수정·삭제
 - 복수 상품 주문 및 주문 당시 상품 정보 보존
 - 결제 성공·실패 처리
@@ -104,6 +108,29 @@ UPDATE 결과가 0건이면 재고 부족 또는 판매 불가능 상품으로 �
 - `USER`, `ADMIN` 역할에 따른 API 접근 제어
 
 운영 환경에서는 HTTPS를 적용하고 Refresh Token 쿠키의 `Secure` 옵션을 활성화해야 합니다.
+
+### Redis 상품 조회 캐시와 장애 Fallback
+
+읽기 빈도가 높은 상품 단건 조회(`GET /api/products/{productId}`)에 Spring Cache와 Redis를 적용했습니다.
+
+- 상품 ID를 캐시 키로 사용하고 TTL을 10분으로 설정
+- null 응답은 캐시하지 않아 일시적인 조회 실패가 남지 않도록 구성
+- `sync = true`로 동일 키의 동시 캐시 미스를 병합해 Cache Stampede 완화
+- 상품 정보·재고·판매 상태 수정 및 삭제 시 해당 상품 키를 즉시 무효화
+- `ProductResponse` 전용 JSON 직렬화로 캐시 데이터 형식을 명확히 제한
+
+조회 성능뿐 아니라 데이터 최신성을 함께 고려해, 쓰기 작업마다 전체 캐시를 비우는 대신 변경된 상품의 키만 제거합니다.
+
+Redis는 조회 성능을 높이기 위한 보조 저장소로 두고, MySQL을 원본 데이터로 유지하는 Look-aside 패턴을 적용했습니다. `CacheErrorHandler`에서 Redis 예외를 다음과 같이 격리합니다.
+
+| 실패 지점 | Fallback 동작 |
+| --- | --- |
+| 캐시 조회(GET) | 경고 로그를 남기고 `@Cacheable` 대상 메서드를 실행해 MySQL에서 조회 |
+| 캐시 저장(PUT) | 캐시 저장 실패를 전파하지 않고 이미 조회한 MySQL 결과를 반환 |
+| 키 무효화(EVICT) | 경고 로그를 남기고 상품 변경·재고 처리 등 DB 작업은 계속 수행 |
+| 전체 무효화(CLEAR) | 캐시 예외를 서비스 계층으로 전파하지 않고 경고 로그 기록 |
+
+이 Fallback은 Redis 장애 시 서비스 기능을 계속 제공하기 위한 가용성 대책입니다. 다만 캐시 무효화 실패 시 TTL이 끝날 때까지 오래된 데이터가 노출될 수 있고, Redis 장애가 지속되면 조회 요청이 MySQL로 집중될 수 있습니다. 현재 구현은 예외 격리와 로그 기록까지 담당하며, 무효화 재시도와 DB 과부하 보호는 별도 운영 대책이 필요합니다.
 
 ## 문제 해결
 
@@ -166,6 +193,20 @@ UPDATE 결과가 0건이면 재고 부족 또는 판매 불가능 상품으로 �
 - `PAID` 상태이며 재고가 차감된 상태
 - `EXPIRED` 상태이며 재고가 복구된 상태
 
+### 5. 캐시 스탬피드와 Redis 장애 전파 완화
+
+**문제**
+
+동일 상품의 캐시가 만료된 순간 요청이 동시에 들어오면 여러 요청이 한꺼번에 MySQL을 조회할 수 있습니다. 또한 Redis 조회·저장·무효화 예외가 그대로 전파되면 원본 데이터베이스가 정상이어도 상품 조회나 변경 API가 실패할 수 있습니다.
+
+**해결**
+
+`@Cacheable(sync = true)`로 동일 키의 동시 캐시 미스를 병합해 한 요청이 원본 데이터를 적재하는 동안 중복 조회가 몰리는 현상을 완화했습니다. Redis 예외는 `CacheErrorHandler`에서 처리해 GET 실패 시 MySQL 조회로 전환하고, PUT 실패 시 조회 결과를 그대로 반환하며, EVICT/CLEAR 실패 시 DB 작업은 계속 수행하도록 구성했습니다.
+
+**트레이드오프**
+
+Fallback은 Redis 장애가 즉시 서비스 장애로 이어지는 것을 막지만, 장애 중 조회 부하가 MySQL로 이동합니다. 특히 무효화 실패는 TTL 동안 오래된 캐시를 남길 수 있으므로 경고 로그를 모니터링하고, 재시도·Outbox와 DB 보호 전략을 후속 과제로 관리합니다.
+
 ## 테스트
 
 Docker와 Testcontainers를 이용해 MySQL 8.4 환경에서 테스트했으며 전체 테스트가 통과했습니다.
@@ -192,13 +233,37 @@ Windows에서는 다음 명령으로 실행할 수 있습니다.
 .\gradlew.bat test
 ```
 
+### k6 상품 조회 부하 테스트
+
+`constant-arrival-rate` 실행기로 상품 단건 조회의 요청률을 고정하고, 캐시 적용 전과 Redis warm cache 구간을 각각 반복 측정했습니다. 모든 측정에서 HTTP 실패율은 0%였습니다.
+
+| 구분 | 실행 조건 | 유효 요청 | p95 응답시간 | 비고 |
+| --- | --- | ---: | ---: | --- |
+| 적용 전 1차 | 약 100 RPS, 3분 | 18,001 | 4.59 ms | dropped 0 |
+| 적용 전 2차 | 약 100 RPS, 3분 | 18,001 | 4.59 ms | dropped 0 |
+| 적용 전 3차 | 약 100 RPS, 3분 | 17,998 | 6.06 ms | dropped 3 |
+| Redis warm 1차 | 10 RPS, 2분 | 1,201 | 7.73 ms | HTTP 실패 0% |
+| Redis warm 2차 | 10 RPS, 2분 | 1,201 | 5.28 ms | HTTP 실패 0% |
+| Redis warm 3차 | 10 RPS 설정 | 702 | 5.54 ms | dropped 1,002로 부하 발생기 이상치 분리 |
+
+기존 결과와 warm cache 결과는 요청률과 실행 시간이 달라 이 수치로 개선율을 계산하지 않았습니다. 현재 결과는 캐시 hit 경로의 안정성과 실패율을 확인하는 근거로 사용하며, 정량적인 전후 비교는 동일한 RPS·duration·실행 환경으로 다시 측정해야 합니다.
+
+```bash
+k6 run -e RATE=100 -e DURATION=3m performance/product-read.js
+k6 run -e RATE=100 -e DURATION=3m performance/product-read-warm.js
+```
+
+측정 시 애플리케이션·MySQL·Redis 상태를 동일하게 맞추고, warm 테스트는 `setup()`에서 대상 상품을 한 번 조회해 캐시를 예열합니다.
+
 ## 실행 방법
 
 ### 사전 준비
 
 - Java 21
 - MySQL 8
+- Redis
 - Node.js
+- k6
 
 ### 환경 변수
 
@@ -208,13 +273,15 @@ Windows에서는 다음 명령으로 실행할 수 있습니다.
 DB_USERNAME=your_mysql_username
 DB_PASSWORD=your_mysql_password
 JWT_SECRET=your_base64_encoded_secret_key
+REDIS_HOST=localhost
+REDIS_PORT=6379
 ```
 
 `.env`에는 비밀번호와 JWT Secret이 포함되므로 Git에 커밋하지 않습니다.
 
 ### Backend
 
-MySQL에 `shop` 데이터베이스를 생성한 후 애플리케이션을 실행합니다.
+MySQL에 `shop` 데이터베이스를 생성하고 Redis를 실행한 후 애플리케이션을 시작합니다.
 
 ```sql
 CREATE DATABASE shop;
@@ -257,6 +324,10 @@ shop
 │     ├─ config
 │     ├─ exception
 │     └─ security
+├─ performance
+│  ├─ product-read.js
+│  ├─ product-read-warm.js
+│  └─ product-read-cold.js
 ├─ src/test/java/com/taejun/shop
 │  ├─ domain
 │  └─ support
@@ -277,7 +348,8 @@ shop
 - 운영 환경별 CORS 및 쿠키 보안 설정 분리
 - 배포 환경에서 Hibernate 스키마 자동 변경 대신 마이그레이션 도구 사용
 - 허용된 필드만 사용할 수 있도록 상품 정렬 조건 제한
-- k6 또는 JMeter 기반 부하 테스트와 병목 분석
+- 동일 조건의 Redis 적용 전·후 k6 재측정과 병목 구간 프로파일링
+- Redis 무효화 실패 작업의 Outbox 저장 및 재시도 처리
+- Redis 장애 통합 테스트와 장애 중 MySQL 과부하를 막기 위한 타임아웃·트래픽 보호 전략 보완
 - CI에서 Testcontainers 통합 테스트 자동 실행
 - 운영 환경을 고려한 만료 주문 다중 인스턴스 처리 전략 보완
-
