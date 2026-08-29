@@ -192,4 +192,12 @@ public class ProductController {
     ) {
         productService.delete(productId);
     }
+
+    @Operation(summary = "상품 단건 조회(부하 테스트용)")
+    @GetMapping("/api/products/{productId}")
+    public ProductResponse findById(
+            @PathVariable Long productId
+    ) {
+        return productService.findById(productId);
+    }
 }

@@ -4,9 +4,12 @@ import com.taejun.shop.domain.product.dto.*;
 import com.taejun.shop.domain.product.entity.Product;
 import com.taejun.shop.domain.product.repository.ProductRepository;
 import com.taejun.shop.domain.product.repository.ProductRepositoryCustom;
+import com.taejun.shop.global.config.RedisCacheConfig;
 import com.taejun.shop.global.exception.CustomException;
 import com.taejun.shop.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -58,6 +61,10 @@ public class ProductService {
     }
 
     @Transactional
+    @CacheEvict(
+            cacheNames = RedisCacheConfig.PRODUCT_CACHE,
+            key = "#productId"
+    )
     public ProductResponse update(
             Long productId,
             ProductUpdateRequest request
@@ -76,6 +83,10 @@ public class ProductService {
     }
 
     @Transactional
+    @CacheEvict(
+            cacheNames = RedisCacheConfig.PRODUCT_CACHE,
+            key = "#productId"
+    )
     public ProductResponse updateStock(
             Long productId,
             ProductStockUpdateRequest request
@@ -87,6 +98,10 @@ public class ProductService {
     }
 
     @Transactional
+    @CacheEvict(
+            cacheNames = RedisCacheConfig.PRODUCT_CACHE,
+            key = "#productId"
+    )
     public ProductResponse updateStatus(
             Long productId,
             ProductStatusUpdateRequest request
@@ -98,6 +113,10 @@ public class ProductService {
     }
 
     @Transactional
+    @CacheEvict(
+            cacheNames = RedisCacheConfig.PRODUCT_CACHE,
+            key = "#productId"
+    )
     public void delete(Long productId) {
         Product product = findProduct(productId);
         productRepository.delete(product);
@@ -108,5 +127,16 @@ public class ProductService {
                 .orElseThrow(() ->
                         new CustomException(ErrorCode.PRODUCT_NOT_FOUND)
                 );
+    }
+
+    @Transactional(readOnly = true)
+    @Cacheable(
+            cacheNames = RedisCacheConfig.PRODUCT_CACHE,
+            key = "#productId",
+            sync = true
+    )
+    public ProductResponse findById(Long productId) {
+        Product product = findProduct(productId);
+        return ProductResponse.from(product);
     }
 }
