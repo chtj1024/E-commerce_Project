@@ -1,6 +1,6 @@
 # Shop — 이커머스 주문·결제 시스템
 
-동시 주문과 결제 과정에서 발생할 수 있는 **재고 및 주문 상태의 정합성 문제**를 중심으로 설계하고, Redis 캐시와 k6 부하 테스트로 상품 조회 경로를 개선·검증한 Spring Boot 기반 이커머스 프로젝트입니다. 동일 키의 동시 캐시 미스를 병합해 캐시 스탬피드를 완화하고, Redis 장애가 상품 조회와 DB 변경 작업의 장애로 전파되지 않도록 Look-aside Fallback을 구성했습니다.
+동시 주문과 결제 과정에서 발생할 수 있는 **재고 및 주문 상태의 정합성 문제**를 중심으로 설계하고, Redis 캐시와 실행계획 기반 인덱스 튜닝으로 상품 조회 경로를 개선·검증한 Spring Boot 기반 이커머스 프로젝트입니다. 동일 키의 동시 캐시 미스를 병합해 캐시 스탬피드를 완화하고, Redis 장애가 상품 조회와 DB 변경 작업의 장애로 전파되지 않도록 Look-aside Fallback을 구성했습니다. 또한 20만 건의 상품 검색 SQL을 `EXPLAIN ANALYZE`로 분석해 `(price ASC, id DESC)` 복합 인덱스를 설계하고, DB 실행계획과 k6 API 부하 테스트에서 개선 효과를 교차 검증했습니다.
 
 회원, 상품, 장바구니, 주문 기능을 구현했으며, 조건부 UPDATE와 멱등성 있는 상태 전이를 적용해 재고 초과 판매, 결제 결과 중복 호출, 결제 완료와 주문 만료의 경합 상황을 처리했습니다. 핵심 시나리오는 Testcontainers의 MySQL 환경에서 통합 테스트와 멀티스레드 동시성 테스트로 검증했습니다.
 
@@ -33,6 +33,7 @@
 - Spring Boot Test
 - Testcontainers
 - k6
+- Flyway
 
 ### Frontend
 
@@ -49,6 +50,8 @@
 - 사용자·관리자 역할 기반 접근 제어
 - 상품 등록·수정·상태 및 재고 관리
 - 키워드·카테고리·가격 범위 기반 상품 복합 검색
+- 가격 범위·가격순 검색에 `(price ASC, id DESC)` 복합 인덱스를 적용하고 `EXPLAIN ANALYZE`와 k6로 전후 성능 검증
+- 검증된 인덱스 DDL을 Flyway 버전 마이그레이션으로 관리
 - Redis 기반 상품 단건 조회 캐시, 동일 키 동시 미스 병합 및 키 단위 무효화
 - Redis 조회·저장·무효화 실패 시 MySQL 원본 데이터와 DB 작업을 우선하는 Look-aside Fallback
 - 장바구니 상품 추가·수정·삭제
@@ -132,6 +135,37 @@ Redis는 조회 성능을 높이기 위한 보조 저장소로 두고, MySQL을 
 
 이 Fallback은 Redis 장애 시 서비스 기능을 계속 제공하기 위한 가용성 대책입니다. 다만 캐시 무효화 실패 시 TTL이 끝날 때까지 오래된 데이터가 노출될 수 있고, Redis 장애가 지속되면 조회 요청이 MySQL로 집중될 수 있습니다. 현재 구현은 예외 격리와 로그 기록까지 담당하며, 무효화 재시도와 DB 과부하 보호는 별도 운영 대책이 필요합니다.
 
+### 실행계획 기반 상품 검색 인덱스 튜닝
+
+20만 건의 상품 데이터에서 가격 범위 검색과 `price ASC, id DESC` 정렬을 수행하는 API를 대상으로 실행계획과 부하 테스트를 연결해 검증했습니다.
+
+```http
+GET /api/products?minPrice=50000&maxPrice=60000&page=0&size=12&sort=priceAsc
+```
+
+인덱스 적용 전에는 20만 건 전체를 탐색하고 조건에 맞는 9,551건을 정렬한 뒤 12건을 반환했습니다. 가격 범위와 정렬 순서를 함께 처리하도록 다음 복합 인덱스를 설계했습니다.
+
+```sql
+CREATE INDEX idx_product_price_id
+    ON product (price ASC, id DESC);
+```
+
+- `price`: 가격 범위 조건과 첫 번째 정렬 기준
+- `id`: 동일 가격 상품의 정렬 순서를 결정하는 두 번째 기준
+- `status` 제외: 선택도가 낮고 `<> 'HIDDEN'` 조건이므로 선두 컬럼으로 두지 않음
+
+인덱스 적용 후 목록 SQL은 Table scan과 별도 Sort에서 Index range scan으로 변경됐으며, `LIMIT 12`에 필요한 행을 찾은 즉시 탐색을 종료했습니다. 검증된 DDL은 Flyway `V3` 마이그레이션으로 버전 관리했습니다.
+
+| 측정 항목 | 적용 전 중앙값 | 적용 후 중앙값 | 변화 |
+| --- | ---: | ---: | ---: |
+| 목록 SQL `EXPLAIN ANALYZE` | 185 ms | 0.178 ms | 약 99.9% 감소 |
+| COUNT SQL `EXPLAIN ANALYZE` | 84.5 ms | 29.4 ms | 약 65.2% 감소 |
+| k6 평균 응답시간 | 704.27 ms | 28.35 ms | 약 96.0% 감소 |
+| k6 p95 | 1,333.63 ms | 39.86 ms | 약 97.0% 감소 |
+| k6 p99 | 1,497.33 ms | 74.48 ms | 약 95.0% 감소 |
+
+실행계획은 적용 전후 각각 5회, k6는 10 RPS·2분 조건에서 각각 3회 측정하고 중앙값을 대표값으로 사용했습니다. 적용 전 1회차에는 처리 지연 누적으로 dropped iteration 81건이 발생했지만 적용 후 3회 모두 dropped iteration과 HTTP 실패가 0건이었습니다. 세부 실험 조건과 원문 결과는 [`performance/index-tuning`](./performance/index-tuning/README.md)에 기록했습니다.
+
 ## 문제 해결
 
 ### 1. 동시 주문 시 재고 초과 판매 방지
@@ -207,6 +241,20 @@ Redis는 조회 성능을 높이기 위한 보조 저장소로 두고, MySQL을 
 
 Fallback은 Redis 장애가 즉시 서비스 장애로 이어지는 것을 막지만, 장애 중 조회 부하가 MySQL로 이동합니다. 특히 무효화 실패는 TTL 동안 오래된 캐시를 남길 수 있으므로 경고 로그를 모니터링하고, 재시도·Outbox와 DB 보호 전략을 후속 과제로 관리합니다.
 
+### 6. 가격 범위 검색의 전체 탐색과 정렬 제거
+
+**문제**
+
+20만 건의 상품 데이터에서 가격 범위 검색과 가격 오름차순 정렬을 수행할 때 목록 SQL이 전체 테이블을 탐색하고 약 9,551건을 정렬했습니다. k6 부하 테스트에서도 높은 지연과 목표 요청률을 처리하지 못한 실행이 관찰됐습니다.
+
+**해결**
+
+Hibernate가 생성한 실제 목록·COUNT SQL을 확보하고 `EXPLAIN ANALYZE`로 병목을 확인했습니다. 가격 범위 조건과 `price ASC, id DESC` 정렬을 함께 처리하도록 `(price ASC, id DESC)` 복합 인덱스를 설계했습니다.
+
+**검증**
+
+동일 SQL을 인덱스 적용 전후 각각 5회 실행한 결과 목록 SQL 중앙값은 185ms에서 0.178ms로, COUNT SQL은 84.5ms에서 29.4ms로 감소했습니다. 동일 API를 k6로 각각 3회 측정한 결과 p95 중앙값은 1,333.63ms에서 39.86ms로 약 97% 감소했으며, 적용 후 dropped iteration과 HTTP 실패는 모두 0건이었습니다.
+
 ## 테스트
 
 Docker와 Testcontainers를 이용해 MySQL 8.4 환경에서 테스트했으며 전체 테스트가 통과했습니다.
@@ -249,11 +297,26 @@ Windows에서는 다음 명령으로 실행할 수 있습니다.
 기존 결과와 warm cache 결과는 요청률과 실행 시간이 달라 이 수치로 개선율을 계산하지 않았습니다. 현재 결과는 캐시 hit 경로의 안정성과 실패율을 확인하는 근거로 사용하며, 정량적인 전후 비교는 동일한 RPS·duration·실행 환경으로 다시 측정해야 합니다.
 
 ```bash
-k6 run -e RATE=100 -e DURATION=3m performance/product-read.js
-k6 run -e RATE=100 -e DURATION=3m performance/product-read-warm.js
+k6 run -e RATE=100 -e DURATION=3m performance/redis-cache/k6/scripts/product-read-baseline.js
+k6 run -e RATE=100 -e DURATION=3m performance/redis-cache/k6/scripts/product-read-warm.js
 ```
 
 측정 시 애플리케이션·MySQL·Redis 상태를 동일하게 맞추고, warm 테스트는 `setup()`에서 대상 상품을 한 번 조회해 캐시를 예열합니다.
+
+### k6 상품 검색 인덱스 Before/After 테스트
+
+가격 범위 검색 API에 `constant-arrival-rate`로 10 RPS를 2분간 유지하고, 인덱스 적용 전후를 각각 3회 측정했습니다. 모든 실행에서 HTTP 실패율은 0%였으며, 대표값은 세 번의 중앙값입니다.
+
+| 구분 | 평균 | p95 | p99 | dropped iterations |
+| --- | ---: | ---: | ---: | ---: |
+| 인덱스 적용 전 중앙값 | 704.27 ms | 1,333.63 ms | 1,497.33 ms | 0건¹ |
+| 인덱스 적용 후 중앙값 | 28.35 ms | 39.86 ms | 74.48 ms | 0건 |
+
+¹ 적용 전 1회차에는 DB 처리 지연이 누적되며 81건이 dropped됐습니다. 해당 이상치를 삭제하지 않고 원문 결과를 보존했으며, 단일 실행이 결론을 왜곡하지 않도록 3회 중앙값으로 비교했습니다.
+
+```bash
+k6 run -e TEST_TYPE=load -e RATE=10 -e DURATION=2m performance/index-tuning/k6/scripts/product-search.js
+```
 
 ## 실행 방법
 
@@ -325,9 +388,12 @@ shop
 │     ├─ exception
 │     └─ security
 ├─ performance
-│  ├─ product-read.js
-│  ├─ product-read-warm.js
-│  └─ product-read-cold.js
+│  ├─ redis-cache
+│  └─ index-tuning
+│     ├─ explain-analyze
+│     └─ k6
+├─ src/main/resources/db/migration
+│  └─ V3__add_product_composite-index.sql
 ├─ src/test/java/com/taejun/shop
 │  ├─ domain
 │  └─ support
@@ -346,7 +412,7 @@ shop
 
 - Refresh Token 해싱 저장
 - 운영 환경별 CORS 및 쿠키 보안 설정 분리
-- 배포 환경에서 Hibernate 스키마 자동 변경 대신 마이그레이션 도구 사용
+- Flyway가 전체 스키마 변경의 단일 주체가 되도록 초기 마이그레이션을 정리하고 Hibernate `ddl-auto=validate`로 전환
 - 허용된 필드만 사용할 수 있도록 상품 정렬 조건 제한
 - 동일 조건의 Redis 적용 전·후 k6 재측정과 병목 구간 프로파일링
 - Redis 무효화 실패 작업의 Outbox 저장 및 재시도 처리

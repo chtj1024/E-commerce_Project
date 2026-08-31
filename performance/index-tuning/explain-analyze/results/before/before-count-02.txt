@@ -1,0 +1,1 @@
+'-> Aggregate: count(p.id)  (cost=21844 rows=1) (actual time=80..80 rows=1 loops=1)\n    -> Filter: ((p.`status` <> \'HIDDEN\') and (p.price >= 50000) and (p.price <= 60000))  (cost=20380 rows=14636) (actual time=0.0742..79.6 rows=9551 loops=1)\n        -> Table scan on p  (cost=20380 rows=197627) (actual time=0.0646..57.6 rows=200000 loops=1)\n'

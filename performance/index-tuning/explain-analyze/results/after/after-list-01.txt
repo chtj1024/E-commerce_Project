@@ -1,0 +1,3 @@
+'-> Limit: 12 row(s)  (cost=8408 rows=12) (actual time=1.81..1.82 rows=12 loops=1)\n
+-> Filter: (p.`status` <> \'HIDDEN\')  (cost=8408 rows=12456) (actual time=1.81..1.82 rows=12 loops=1)\n
+-> Index range scan on p using idx_product_price_id over (50000 <= price <= 60000), with index condition: (p.price between 50000 and 60000)  (cost=8408 rows=18684) (actual time=1.8..1.81 rows=12 loops=1)\n'
