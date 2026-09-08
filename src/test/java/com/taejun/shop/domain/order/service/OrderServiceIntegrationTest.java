@@ -6,10 +6,10 @@ import com.taejun.shop.domain.order.dto.OrderItemRequest;
 import com.taejun.shop.domain.order.dto.OrderResponse;
 import com.taejun.shop.domain.order.enums.OrderStatus;
 import com.taejun.shop.domain.product.entity.Product;
+import com.taejun.shop.global.exception.CustomException;
 import com.taejun.shop.support.IntegrationTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -60,7 +60,8 @@ class OrderServiceIntegrationTest extends IntegrationTestSupport {
 
         assertThatThrownBy(() ->
                 orderService.create(member.getEmail(), request))
-                .isInstanceOf(ResponseStatusException.class);
+                .isInstanceOf(CustomException.class)
+                .hasMessage("재고가 부족하거나 판매할 수 없는 상품입니다.");
 
         Product firstResult =
                 productRepository.findById(firstProduct.getId()).orElseThrow();

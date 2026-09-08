@@ -4,6 +4,8 @@ import com.taejun.shop.domain.member.entity.Member;
 import com.taejun.shop.domain.order.dto.OrderCreateRequest;
 import com.taejun.shop.domain.order.dto.OrderItemRequest;
 import com.taejun.shop.domain.product.entity.Product;
+import com.taejun.shop.global.exception.CustomException;
+import com.taejun.shop.global.exception.ErrorCode;
 import com.taejun.shop.support.IntegrationTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,10 +81,13 @@ public class OrderServiceConcurrencyTest extends IntegrationTestSupport {
                         );
 
                         return true;
-                    } catch (ResponseStatusException exception) {
-                        return false;
-                    }
+                    } catch (CustomException exception) {
+                        if (exception.getErrorCode() == ErrorCode.INSUFFICIENT_STOCK) {
+                            return false;
+                        }
 
+                        throw exception;
+                    }
                 }));
             }
 
