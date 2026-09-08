@@ -8,7 +8,7 @@
 
 | 항목 | 내용 |
 | --- | --- |
-| 개발 기간 | 2026.04 ~ 2026.07 |
+| 개발 기간 | 2026.07 ~ 2026.09 |
 | 개발 인원 | 1명 |
 | 담당 범위 | 백엔드 설계·구현, 테스트 및 프론트엔드 구현 |
 | 주요 관심사 | 주문·결제 동시성, 데이터 정합성, 캐시 안정성, 인증·인가, 동적 검색 |
@@ -41,6 +41,14 @@
 - TypeScript
 - Vite
 - Axios
+
+### Infrastructure
+
+- Docker
+- Docker Compose
+- Eclipse Temurin 21
+- MySQL 8.4
+- Redis 7
 
 ## 주요 기능
 
@@ -320,6 +328,71 @@ k6 run -e TEST_TYPE=load -e RATE=10 -e DURATION=2m performance/index-tuning/k6/s
 
 ## 실행 방법
 
+### Docker 구성
+
+| 구성 요소 | 역할 | 호스트 포트 | 데이터 유지 |
+| --- | --- | ---: | --- |
+| MySQL 8.4 | 원본 데이터베이스 | `3307` | `mysql_data` 볼륨 |
+| Redis 7 | 상품 조회 캐시 | `6379` | `redis_data` 볼륨 |
+| Frontend | 프론트엔드 서비스 | `3000` | 해당 없음 |
+| Backend image | Spring Boot 애플리케이션 이미지 | `8080` | 해당 없음 |
+
+현재 `compose.yaml`은 MySQL, Redis, Frontend를 실행합니다. Backend는 Compose 서비스에 포함하지 않았으며, 루트 `Dockerfile`로 이미지를 별도 빌드할 수 있습니다.
+
+- MySQL과 Redis에 `healthcheck`를 적용해 컨테이너 상태를 확인합니다.
+- MySQL과 Redis 데이터는 named volume에 저장해 컨테이너를 재생성해도 유지합니다.
+- 호스트 포트는 `127.0.0.1`에 바인딩해 로컬 환경에서만 접근하도록 구성했습니다.
+- Backend 이미지는 JDK 빌드 단계와 JRE 실행 단계를 분리한 멀티스테이지 빌드를 사용하며, 런타임에서는 비루트 `spring` 사용자로 실행합니다.
+- `.dockerignore`에서 빌드 결과물, IDE 설정, 성능 측정 자료, 환경변수 파일과 Frontend를 제외해 Backend 이미지의 빌드 컨텍스트를 줄였습니다.
+
+### Docker Compose로 인프라와 Frontend 실행
+
+프로젝트 루트에 `.env` 파일을 만들고 Compose에서 사용하는 값을 설정합니다.
+
+```properties
+DB_USERNAME=your_mysql_username
+DB_PASSWORD=your_mysql_password
+MYSQL_ROOT_PASSWORD=your_mysql_root_password
+```
+
+MySQL, Redis, Frontend를 실행하고 상태를 확인합니다.
+
+```bash
+docker compose up -d mysql redis frontend
+docker compose ps
+```
+
+Compose 환경에서 MySQL은 호스트의 `3307` 포트, Redis는 `6379` 포트, Frontend는 `3000` 포트로 접근할 수 있습니다.
+
+```text
+MySQL: 127.0.0.1:3307
+Redis: 127.0.0.1:6379
+Frontend: http://localhost:3000
+```
+
+컨테이너를 종료하되 데이터 볼륨은 유지하려면 다음 명령을 사용합니다.
+
+```bash
+docker compose down
+```
+
+다음 명령은 MySQL과 Redis의 저장 데이터까지 삭제하므로 초기화가 필요한 경우에만 사용합니다.
+
+```bash
+docker compose down -v
+```
+
+### Backend Docker 이미지 빌드
+
+루트 `Dockerfile`은 Gradle Wrapper로 Spring Boot 실행 JAR을 빌드한 뒤 JRE 기반 런타임 이미지에 복사합니다. 테스트는 이미지 빌드 단계에서 제외되므로 이미지 빌드 전에 별도로 실행해야 합니다.
+
+```bash
+./gradlew test
+docker build -t shop-backend .
+```
+
+Backend 컨테이너를 실행할 때는 MySQL, Redis, JWT 설정 등 애플리케이션에 필요한 환경변수를 실행 환경에 맞게 전달해야 합니다. 현재 Backend는 Compose 네트워크에 포함되어 있지 않으므로, 로컬 실행이 기본 경로입니다.
+
 ### 사전 준비
 
 - Java 21
@@ -335,12 +408,13 @@ k6 run -e TEST_TYPE=load -e RATE=10 -e DURATION=2m performance/index-tuning/k6/s
 ```properties
 DB_USERNAME=your_mysql_username
 DB_PASSWORD=your_mysql_password
+MYSQL_ROOT_PASSWORD=your_mysql_root_password
 JWT_SECRET=your_base64_encoded_secret_key
 REDIS_HOST=localhost
 REDIS_PORT=6379
 ```
 
-`.env`에는 비밀번호와 JWT Secret이 포함되므로 Git에 커밋하지 않습니다.
+`.env`에는 비밀번호와 JWT Secret이 포함되므로 Git에 커밋하지 않습니다. `MYSQL_ROOT_PASSWORD`는 Docker Compose의 MySQL 초기화에 사용합니다. Spring Boot를 로컬에서 실행할 때 `.env`가 자동으로 애플리케이션 환경변수에 주입되는 것은 아니므로, IDE나 셸의 실행 환경에도 필요한 값을 별도로 설정해야 합니다.
 
 ### Backend
 

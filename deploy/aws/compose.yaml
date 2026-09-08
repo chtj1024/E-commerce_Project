@@ -1,0 +1,94 @@
+name: shop-aws
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis_data:/data
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *default-logging
+
+  backend:
+    image: ${IMAGE_PREFIX}-backend:${APP_VERSION}
+    restart: unless-stopped
+    environment:
+      DB_URL: "jdbc:mysql://${RDS_HOST}:3306/shop?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&sslMode=VERIFY_IDENTITY&trustCertificateKeyStoreUrl=file:/app/certs/rds-truststore.p12&trustCertificateKeyStoreType=PKCS12&trustCertificateKeyStorePassword=changeit"
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+
+      FLYWAY_BASELINE_ON_MIGRATE: "false"
+      SPRING_JPA_SHOW_SQL: "false"
+      SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL: "false"
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: "5"
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: "1"
+
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health
+      MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+      MANAGEMENT_ENDPOINT_HEALTH_GROUP_READINESS_INCLUDE: "readinessState,db,redis"
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: never
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_COMPONENTS: never
+
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx512m -XX:+ExitOnOutOfMemoryError"
+
+    volumes:
+      - ./certs:/app/certs:ro
+    mem_limit: 1g
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -T 5 -O /dev/null http://127.0.0.1:8080/actuator/health/readiness || exit 1
+      interval: 10s
+      timeout: 7s
+      retries: 12
+      start_period: 60s
+    logging: *default-logging
+
+  frontend:
+    image: ${IMAGE_PREFIX}-frontend:${APP_VERSION}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:80"
+    mem_limit: 128m
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget -q -T 5 -O /dev/null http://127.0.0.1/healthz || exit 1
+      interval: 10s
+      timeout: 7s
+      retries: 6
+    logging: *default-logging
+
+volumes:
+  redis_data:

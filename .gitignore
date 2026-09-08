@@ -36,3 +36,8 @@ out/
 
 ### VS Code ###
 .vscode/
+
+/deploy/aws/.env
+/deploy/aws/certs/
+/deploy/aws/current.env
+/deploy/aws/previous.env

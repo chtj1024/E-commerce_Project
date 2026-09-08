@@ -1,0 +1,16 @@
+.git
+.gradle
+.idea
+build
+output
+performance
+tmp
+.env
+**/.env
+**/.env.*
+**/*.pem
+**/*.p12
+**/node_modules
+deploy/aws/certs
+
+frontend

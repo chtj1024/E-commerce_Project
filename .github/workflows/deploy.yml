@@ -1,0 +1,245 @@
+name: Shop CI CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: shop-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: shop
+          MYSQL_USER: shop_ci
+          MYSQL_PASSWORD: ci_password
+          MYSQL_ROOT_PASSWORD: ci_root_password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_root_password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 7379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=15
+
+    env:
+      DB_URL: jdbc:mysql://127.0.0.1:3307/shop?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&allowPublicKeyRetrieval=true&sslMode=DISABLED
+      DB_USERNAME: shop_ci
+      DB_PASSWORD: ci_password
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: "7379"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Prepare CI environment
+        shell: bash
+        run: |
+          chmod +x gradlew
+          secret="$(openssl rand -base64 64 | tr -d '\n')"
+          printf 'JWT_SECRET=%s\n' "$secret" >> "$GITHUB_ENV"
+          printf 'IMAGE_PREFIX=ghcr.io/%s\n' "${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Show AWS identity subject
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import json
+          import base64
+          import urllib.request
+
+          url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+          url += "&audience=sts.amazonaws.com"
+
+          request = urllib.request.Request(
+              url,
+              headers={
+                  "Authorization":
+                      "Bearer " + os.environ["ACTIONS_ID_TOKEN_REQUEST_TOKEN"]
+              }
+          )
+
+          with urllib.request.urlopen(request, timeout=30) as response:
+              token = json.load(response)["value"]
+
+          payload = token.split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write("AWS OIDC subject:\n\n")
+              summary.write("`" + claims["sub"] + "`\n\n")
+              summary.write("Commit: `" + os.environ["GITHUB_SHA"] + "`\n")
+          PY
+
+      - name: Test
+        run: ./gradlew test --no-daemon
+
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GH_TOKEN" |
+            docker login ghcr.io \
+              --username "$GITHUB_ACTOR" \
+              --password-stdin
+
+      - name: Build and push images
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docker build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -t "$IMAGE_PREFIX-backend:$GITHUB_SHA" \
+            .
+
+          docker build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            -f deploy/aws/Dockerfile.frontend \
+            -t "$IMAGE_PREFIX-frontend:$GITHUB_SHA" \
+            .
+
+          docker push "$IMAGE_PREFIX-backend:$GITHUB_SHA"
+          docker push "$IMAGE_PREFIX-frontend:$GITHUB_SHA"
+
+          printf '\nImage prefix: `%s`\n' "$IMAGE_PREFIX" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_REGION: ap-northeast-2
+      INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      AWS_PAGER: ""
+
+    steps:
+      - name: Authenticate to AWS
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+          role-session-name: shop-deploy
+
+      - name: Deploy through Systems Manager
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import os
+          import json
+          import re
+
+          sha = os.environ["GITHUB_SHA"]
+          if not re.fullmatch(r"[0-9a-f]{40}", sha):
+              raise SystemExit("Invalid commit SHA")
+
+          parameters = {
+              "commands": ["/opt/shop/deploy.sh " + sha],
+              "executionTimeout": ["900"]
+          }
+
+          with open("ssm-parameters.json", "w") as file:
+              json.dump(parameters, file)
+          PY
+
+          command_id="$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --parameters file://ssm-parameters.json \
+            --timeout-seconds 60 \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          echo "SSM command: $command_id"
+
+          for attempt in $(seq 1 120); do
+            if status="$(aws ssm get-command-invocation \
+              --command-id "$command_id" \
+              --instance-id "$INSTANCE_ID" \
+              --query Status \
+              --output text \
+              2>ssm-error.txt)"; then
+
+              case "$status" in
+                Pending|InProgress|Delayed|Cancelling)
+                  sleep 10
+                  ;;
+                *)
+                  aws ssm get-command-invocation \
+                    --command-id "$command_id" \
+                    --instance-id "$INSTANCE_ID" \
+                    --query '{Status:Status,Output:StandardOutputContent,Error:StandardErrorContent}' \
+                    --output json
+
+                  if [[ "$status" == "Success" ]]; then
+                    exit 0
+                  fi
+
+                  exit 1
+                  ;;
+              esac
+            else
+              if grep -q InvocationDoesNotExist ssm-error.txt; then
+                sleep 5
+              else
+                cat ssm-error.txt
+                exit 1
+              fi
+            fi
+          done
+
+          echo "Timed out waiting for deployment."
+          exit 1
