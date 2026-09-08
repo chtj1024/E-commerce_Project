@@ -12,5 +12,3 @@ tmp
 **/*.p12
 **/node_modules
 deploy/aws/certs
-
-frontend
