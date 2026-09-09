@@ -13,12 +13,11 @@ import com.taejun.shop.domain.product.repository.ProductRepository;
 import com.taejun.shop.global.exception.CustomException;
 import com.taejun.shop.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -64,7 +63,10 @@ public class OrderService {
 
         CustomerOrder order = new CustomerOrder(
                 member,
-                LocalDateTime.now().plusMinutes(PAYMENT_TIMEOUT_MINUTES)
+                Instant.now().plus(
+                        PAYMENT_TIMEOUT_MINUTES,
+                        ChronoUnit.MINUTES
+                )
         );
 
         // 동시성 처리 : 상품 ID 순서 고정

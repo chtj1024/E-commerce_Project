@@ -23,7 +23,7 @@ export default function OrderPendingPage({
   order,
   onBack,
 }: OrderPendingPageProps) {
-  const [now, setNow] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const timerId = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -31,7 +31,9 @@ export default function OrderPendingPage({
   }, []);
 
   const expiresAt = order ? new Date(order.expiresAt) : null;
-  const isExpired = expiresAt ? expiresAt.getTime() <= now : false;
+  const isExpired =
+    order?.status === "EXPIRED" ||
+    (expiresAt !== null && expiresAt.getTime() <= now);
 
   return (
     <main className="order-pending-page">

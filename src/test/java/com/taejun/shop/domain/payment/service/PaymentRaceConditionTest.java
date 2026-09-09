@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.concurrent.*;
 
@@ -52,7 +53,7 @@ public class PaymentRaceConditionTest extends IntegrationTestSupport {
 
                     CustomerOrder order = new CustomerOrder(
                             member,
-                            LocalDateTime.now().minusMinutes(1)
+                            Instant.now().minus(1, ChronoUnit.MINUTES)
                     );
 
                     order.addItem(

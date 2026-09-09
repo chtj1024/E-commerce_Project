@@ -9,7 +9,7 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -43,7 +43,7 @@ public class CustomerOrder extends BaseEntity {
     private Long totalPrice;
 
     @Column(nullable = false)
-    private LocalDateTime expiresAt;
+    private Instant expiresAt;
 
     @OneToMany(
             mappedBy = "order",
@@ -52,7 +52,7 @@ public class CustomerOrder extends BaseEntity {
     )
     private final List<OrderItem> orderItems = new ArrayList<>();
 
-    public CustomerOrder(Member member, LocalDateTime expiresAt) {
+    public CustomerOrder(Member member, Instant expiresAt) {
         this.member = member;
         this.status = OrderStatus.PAYMENT_PENDING;
         this.totalPrice = 0L;

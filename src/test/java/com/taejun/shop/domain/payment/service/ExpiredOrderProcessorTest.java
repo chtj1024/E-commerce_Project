@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -86,7 +87,7 @@ public class ExpiredOrderProcessorTest extends IntegrationTestSupport {
 
         CustomerOrder order = new CustomerOrder(
                 member,
-                LocalDateTime.now().plusMinutes(15)
+                Instant.now().plus(15, ChronoUnit.MINUTES)
         );
 
         order.addItem(
@@ -123,7 +124,7 @@ public class ExpiredOrderProcessorTest extends IntegrationTestSupport {
 
         CustomerOrder order = new CustomerOrder(
                 member,
-                LocalDateTime.now().minusMinutes(1)
+                Instant.now().minus(1, ChronoUnit.MINUTES)
         );
 
         order.addItem(

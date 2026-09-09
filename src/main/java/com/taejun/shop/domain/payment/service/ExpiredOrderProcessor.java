@@ -11,7 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
 @Service
 @RequiredArgsConstructor
@@ -27,7 +27,7 @@ public class ExpiredOrderProcessor {
                 orderId,
                 OrderStatus.PAYMENT_PENDING,
                 OrderStatus.EXPIRED,
-                LocalDateTime.now()
+                Instant.now()
         );
 
         if (updatedRows == 0) {

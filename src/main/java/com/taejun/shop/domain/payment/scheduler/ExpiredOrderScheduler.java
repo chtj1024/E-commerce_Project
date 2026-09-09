@@ -9,7 +9,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 import java.util.List;
 
 @Slf4j
@@ -26,7 +26,7 @@ public class ExpiredOrderScheduler {
     public void restoreExpiredOrders() {
         List<Long> orderIds = orderRepository.findExpiredOrderIds(
                 OrderStatus.PAYMENT_PENDING,
-                LocalDateTime.now(),
+                Instant.now(),
                 PageRequest.of(0, BATCH_SIZE)
         );
 
