@@ -10,7 +10,7 @@ import OrderPendingPage from "./pages/OrderPendingPage";
 import type { OrderResponse } from "./types/order";
 import "./App.css";
 
-const API_URL = "http://localhost:8080/api/members";
+const API_URL = "api/members";
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 20;
 
