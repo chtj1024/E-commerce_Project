@@ -1,8 +1,18 @@
-# Shop — 이커머스 주문·결제 시스템
+# Shop — 주문 정합성 검증부터 AWS 자동 배포까지
 
-동시 주문과 결제 과정에서 발생할 수 있는 **재고 및 주문 상태의 정합성 문제**를 중심으로 설계하고, Redis 캐시와 실행계획 기반 인덱스 튜닝으로 상품 조회 경로를 개선·검증한 Spring Boot 기반 이커머스 프로젝트입니다. 동일 키의 동시 캐시 미스를 병합해 캐시 스탬피드를 완화하고, Redis 장애가 상품 조회와 DB 변경 작업의 장애로 전파되지 않도록 Look-aside Fallback을 구성했습니다. 또한 20만 건의 상품 검색 SQL을 `EXPLAIN ANALYZE`로 분석해 `(price ASC, id DESC)` 복합 인덱스를 설계하고, DB 실행계획과 k6 API 부하 테스트에서 개선 효과를 교차 검증했습니다.
+회원·상품·장바구니·주문·결제 흐름을 구현한 **Spring Boot 기반 1인 이커머스 프로젝트**입니다. 조건부 UPDATE로 동시 주문의 재고 정합성을 검증하고, 실행계획 기반 인덱스 튜닝으로 상품 검색 지연을 개선했습니다. AWS EC2·RDS에 배포하고 GitHub Actions로 테스트·이미지 빌드·배포를 연결했습니다.
 
-회원, 상품, 장바구니, 주문 기능을 구현했으며, 조건부 UPDATE와 멱등성 있는 상태 전이를 적용해 재고 초과 판매, 결제 결과 중복 호출, 결제 완료와 주문 만료의 경합 상황을 처리했습니다. 핵심 시나리오는 Testcontainers의 MySQL 환경에서 통합 테스트와 멀티스레드 동시성 테스트로 검증했습니다.
+## 핵심 결과
+
+| 주제 | 구현과 검증 결과 | 근거 |
+| --- | --- | --- |
+| 검색 성능 | 20만 건 상품 검색의 API p95 중앙값 **1,333.63 → 39.86ms, 약 97% 감소** | [실행계획·k6 실험](./performance/index-tuning/README.md) |
+| 동시 주문 | 재고 10개 상품에 동시 요청 20개를 실행해 **성공 주문 10건·최종 재고 0개** 확인 | 아래 테스트 시나리오 |
+| 배포 자동화 | **main push → 테스트 → 이미지 빌드·GHCR → OIDC·SSM → EC2** 배포 | [워크플로](./.github/workflows/deploy.yml) · [Actions 실행 기록](https://github.com/chtj1024/E-commerce_Project/actions) |
+
+검색 성능 수치는 기존 인덱스 실험 결과입니다. k6는 전후 각각 10 RPS·2분·3회 실행의 p95 중앙값을 비교했으며, AWS 배포 환경에서 새로 측정한 수치가 아닙니다.
+
+[포트폴리오](https://app.notion.com/p/3c47b079826d81afa1f3f11ad400a673) · [AWS 구성과 CI/CD](#aws-배포와-cicd) · [핵심 설계](#핵심-설계) · [테스트](#테스트) · [로컬 실행](#로컬-실행)
 
 ## 프로젝트 정보
 
@@ -10,45 +20,20 @@
 | --- | --- |
 | 개발 기간 | 2026.07 ~ 2026.09 |
 | 개발 인원 | 1명 |
-| 담당 범위 | 백엔드 설계·구현, 테스트 및 프론트엔드 구현 |
-| 주요 관심사 | 주문·결제 동시성, 데이터 정합성, 캐시 안정성, 인증·인가, 동적 검색 |
+| 담당 범위 | 백엔드 설계·구현, 프런트엔드, 테스트·성능 실험, AWS 배포·CI/CD |
+| 주요 관심사 | 주문·결제 정합성, 조회 성능, 캐시 안정성, 배포 자동화 |
 
 ## 기술 스택
 
-### Backend
-
-- Java 21
-- Spring Boot 3.5
-- Spring Data JPA
-- Spring Security
-- QueryDSL
-- JWT
-- Redis Cache
-- Gradle
-
-### Database & Test
-
-- MySQL 8
-- JUnit 5
-- Spring Boot Test
-- Testcontainers
-- k6
-- Flyway
-
-### Frontend
-
-- React 19
-- TypeScript
-- Vite
-- Axios
-
-### Infrastructure
-
-- Docker
-- Docker Compose
-- Eclipse Temurin 21
-- MySQL 8.4
-- Redis 7
+| 영역 | 기술과 사용 목적 |
+| --- | --- |
+| Backend | Java 21, Spring Boot 3.5, Spring Data JPA, QueryDSL |
+| Security / API | Spring Security, JWT, Swagger / OpenAPI |
+| Database / Cache | MySQL 8.4, Redis 7, Spring Cache, Flyway |
+| Test / Performance | JUnit 5, Testcontainers, k6, EXPLAIN ANALYZE |
+| AWS / Delivery | EC2, RDS MySQL, VPC, IAM, Systems Manager, GitHub Actions, GHCR |
+| Runtime | Docker, Docker Compose, Nginx, Spring Boot Actuator |
+| Frontend | React 19, TypeScript, Vite, Axios |
 
 ## 주요 기능
 
@@ -66,6 +51,81 @@
 - 복수 상품 주문 및 주문 당시 상품 정보 보존
 - 결제 성공·실패 처리
 - 결제 대기시간이 지난 주문의 자동 만료 및 재고 복구
+
+## AWS 배포와 CI/CD
+
+### 실행 환경
+
+EC2 한 대에서 Nginx·프런트엔드, Spring Boot, Redis를 컨테이너로 실행하고, MySQL은 RDS로 분리했습니다. RDS는 프라이빗 서브넷에 두고 EC2 보안 그룹에서 오는 DB 연결만 허용했습니다. 브라우저 기능은 **SSH 터널로 검증**했으며, 공개 도메인·HTTPS 서비스는 구성하지 않았습니다.
+
+```mermaid
+flowchart LR
+    U["브라우저"] -->|"SSH 터널"| N["EC2 Nginx · Frontend"]
+    subgraph EC2["EC2 · Docker Compose"]
+        N -->|"/api"| B["Spring Boot"]
+        B --> R[("Redis")]
+    end
+    B -->|"TLS · 서버 인증서 검증"| D[("RDS MySQL · Private subnet")]
+```
+
+- [배포 Compose](./deploy/aws/compose.yaml): 컨테이너 메모리·로그 크기를 제한하고 Redis 데이터는 named volume에 보관합니다.
+- RDS 연결에는 `sslMode=VERIFY_IDENTITY`와 Java truststore를 사용합니다. DB 비밀번호·JWT 키는 EC2의 별도 환경변수 파일로 관리합니다.
+- 스키마 변경은 Flyway로 적용하고 Hibernate는 `ddl-auto=validate`로 엔티티와 DB의 일치 여부를 확인합니다.
+- 최초 구성 이후 애플리케이션 배포는 GitHub Actions가 수행합니다. 서버의 Compose·배포 스크립트·인증서 설정은 별도의 초기 설정 대상입니다.
+
+### main push 자동 배포
+
+```mermaid
+flowchart LR
+    P["main push"] --> T["Gradle 테스트"]
+    T --> I["백엔드 · 프런트엔드 이미지 빌드"]
+    I --> G["GHCR · 커밋 SHA 태그"]
+    G --> O["GitHub OIDC · AWS 임시 권한"]
+    O --> S["SSM Run Command"]
+    S --> E["EC2 이미지 다운로드 · 컨테이너 교체"]
+    E --> H["readiness · 웹 응답 확인"]
+    H --> A["배포 결과를 Actions에 반영"]
+```
+
+| 단계 | 동작 | 선택 이유 |
+| --- | --- | --- |
+| 테스트 | GitHub 실행 서버의 MySQL·Redis 환경에서 `./gradlew test --no-daemon` 실행 | 배포 전 테스트를 실행하고 테스트 실패 시 후속 빌드·배포를 진행하지 않음 |
+| 빌드·보관 | 백엔드·프런트엔드 이미지를 GHCR에 업로드 | 작은 EC2에서 빌드하지 않고 실행만 담당 |
+| 버전 식별 | 전체 Git 커밋 SHA를 이미지 태그로 사용 | 배포 코드와 실행 이미지의 대응 관계 확인 |
+| AWS 인증 | OIDC로 배포 역할의 임시 자격 증명 발급 | GitHub에 장기 AWS 액세스 키를 저장하지 않음 |
+| 원격 실행 | SSM으로 EC2의 배포 스크립트 실행 | GitHub 실행 서버의 IP를 SSH 허용 목록에 추가할 필요가 없음 |
+| 성공 판정 | Compose healthcheck와 `/healthz`·웹 응답 확인 후 SSM 최종 상태 조회 | 명령 전달만으로 배포 성공 처리하지 않음 |
+
+[워크플로 코드](./.github/workflows/deploy.yml) · [배포 스크립트](./deploy/aws/deploy.sh) · [Actions 실행 기록](https://github.com/chtj1024/E-commerce_Project/actions)
+
+워크플로는 `main` push와 수동 실행을 지원합니다. `DEPLOY_ENABLED=true`일 때 배포하며, `AWS_ROLE_ARN`과 `EC2_INSTANCE_ID`로 배포 역할과 대상을 지정합니다. GitHub의 concurrency 설정과 서버의 `flock`으로 배포 작업이 겹치지 않도록 구성했습니다.
+
+### 상태 확인과 검증 범위
+
+- Actuator readiness에 앱 상태·MySQL·Redis를 포함하고, 프런트엔드 프록시를 통한 `/healthz` 응답도 확인합니다.
+- 정상 배포 후 커밋 SHA를 기록해 실행 중인 버전을 식별합니다.
+- AWS에서의 배포·재배포 및 SSH 터널을 통한 기능 확인을 수행했습니다. readiness 확인과 사용자 기능 테스트는 별도의 검증입니다.
+- 단일 EC2·Single-AZ RDS를 사용한 소규모 검증 환경이며, 컨테이너 교체 시 중단이 발생할 수 있습니다.
+
+### 배포 후 확인 명령
+
+아래 명령은 초기 설정과 배포가 끝난 **EC2**에서 실행합니다.
+
+```bash
+cd /opt/shop
+sudo docker compose --env-file .env --env-file current.env ps
+sudo docker compose --env-file .env --env-file current.env logs --tail=100 backend
+curl --fail http://127.0.0.1:8088/healthz
+sudo cat /opt/shop/current.env
+```
+
+외부 브라우저 접근은 SSH 터널을 사용합니다. `EC2_PUBLIC_IP`와 키 경로는 본인 값으로 바꿉니다.
+
+```powershell
+ssh -i "C:\path\to\shop-demo-key.pem" -N -L 18080:127.0.0.1:8088 ubuntu@EC2_PUBLIC_IP
+```
+
+터널 연결 중 `http://localhost:18080`으로 접속합니다. 데이터와 애플리케이션은 AWS에서 실행되며 공개 URL은 제공하지 않습니다.
 
 ## 핵심 설계
 
@@ -174,95 +234,6 @@ CREATE INDEX idx_product_price_id
 
 실행계획은 적용 전후 각각 5회, k6는 10 RPS·2분 조건에서 각각 3회 측정하고 중앙값을 대표값으로 사용했습니다. 적용 전 1회차에는 처리 지연 누적으로 dropped iteration 81건이 발생했지만 적용 후 3회 모두 dropped iteration과 HTTP 실패가 0건이었습니다. 세부 실험 조건과 원문 결과는 [`performance/index-tuning`](./performance/index-tuning/README.md)에 기록했습니다.
 
-## 문제 해결
-
-### 1. 동시 주문 시 재고 초과 판매 방지
-
-**문제**
-
-재고 조회와 차감을 분리하면 동시 요청들이 동일한 재고를 읽고 주문을 성공시킬 수 있습니다.
-
-**해결**
-
-판매 상태와 남은 재고를 WHERE 조건으로 검사하면서 재고를 차감하는 조건부 UPDATE를 사용했습니다. 영향을 받은 행이 1건일 때만 주문 상품을 생성하도록 구성했습니다.
-
-**검증**
-
-재고가 10개인 상품에 20개의 주문을 동시에 요청했을 때 성공한 주문 10건, 생성된 주문 10건, 최종 재고 0개가 일치하는지 멀티스레드 통합 테스트로 검증했습니다.
-
-### 2. 복수 상품 주문의 원자성 보장
-
-**문제**
-
-여러 상품 중 일부 상품의 재고만 부족한 경우, 앞에서 차감한 상품의 재고가 그대로 남으면 데이터 불일치가 발생합니다.
-
-**해결**
-
-주문 생성과 전체 상품의 재고 차감을 하나의 트랜잭션으로 처리했습니다. 하나라도 차감에 실패하면 주문 저장과 기존 재고 차감을 모두 롤백합니다.
-
-**검증**
-
-복수 상품 중 하나의 재고가 부족한 시나리오에서 모든 상품의 재고와 주문 데이터가 변경되지 않는지 확인했습니다.
-
-### 3. 결제 결과 중복 호출의 멱등성 확보
-
-**문제**
-
-결제 실패 응답이나 만료 처리가 중복 호출되면 동일한 재고가 여러 번 복구될 수 있습니다.
-
-**해결**
-
-최초 요청만 `PAYMENT_PENDING`에서 실패 또는 만료 상태로 전환할 수 있게 했습니다. 상태 변경에 성공한 경우에만 재고를 복구해 동일한 요청이 반복돼도 결과가 한 번만 반영되도록 구성했습니다.
-
-**검증**
-
-결제 실패와 만료 처리를 각각 세 번 호출해도 재고가 최초 수량까지만 복구되는지 검증했습니다.
-
-### 4. 결제 성공과 주문 만료의 경합 처리
-
-**문제**
-
-결제 완료 응답과 주문 만료 스케줄러가 동시에 실행되면 결제가 완료됐는데 재고가 복구되거나, 만료됐는데 재고가 차감된 상태로 남을 수 있습니다.
-
-**해결**
-
-두 작업 모두 `PAYMENT_PENDING` 상태를 조건으로 상태 전이를 시도하게 했습니다. 먼저 상태를 변경한 작업만 성공하며, 나머지 작업은 후속 로직을 실행하지 않습니다.
-
-**검증**
-
-결제 완료와 만료 처리를 두 스레드에서 동시에 실행한 후 다음 두 결과 중 하나만 성립하는지 확인했습니다.
-
-- `PAID` 상태이며 재고가 차감된 상태
-- `EXPIRED` 상태이며 재고가 복구된 상태
-
-### 5. 캐시 스탬피드와 Redis 장애 전파 완화
-
-**문제**
-
-동일 상품의 캐시가 만료된 순간 요청이 동시에 들어오면 여러 요청이 한꺼번에 MySQL을 조회할 수 있습니다. 또한 Redis 조회·저장·무효화 예외가 그대로 전파되면 원본 데이터베이스가 정상이어도 상품 조회나 변경 API가 실패할 수 있습니다.
-
-**해결**
-
-`@Cacheable(sync = true)`로 동일 키의 동시 캐시 미스를 병합해 한 요청이 원본 데이터를 적재하는 동안 중복 조회가 몰리는 현상을 완화했습니다. Redis 예외는 `CacheErrorHandler`에서 처리해 GET 실패 시 MySQL 조회로 전환하고, PUT 실패 시 조회 결과를 그대로 반환하며, EVICT/CLEAR 실패 시 DB 작업은 계속 수행하도록 구성했습니다.
-
-**트레이드오프**
-
-Fallback은 Redis 장애가 즉시 서비스 장애로 이어지는 것을 막지만, 장애 중 조회 부하가 MySQL로 이동합니다. 특히 무효화 실패는 TTL 동안 오래된 캐시를 남길 수 있으므로 경고 로그를 모니터링하고, 재시도·Outbox와 DB 보호 전략을 후속 과제로 관리합니다.
-
-### 6. 가격 범위 검색의 전체 탐색과 정렬 제거
-
-**문제**
-
-20만 건의 상품 데이터에서 가격 범위 검색과 가격 오름차순 정렬을 수행할 때 목록 SQL이 전체 테이블을 탐색하고 약 9,551건을 정렬했습니다. k6 부하 테스트에서도 높은 지연과 목표 요청률을 처리하지 못한 실행이 관찰됐습니다.
-
-**해결**
-
-Hibernate가 생성한 실제 목록·COUNT SQL을 확보하고 `EXPLAIN ANALYZE`로 병목을 확인했습니다. 가격 범위 조건과 `price ASC, id DESC` 정렬을 함께 처리하도록 `(price ASC, id DESC)` 복합 인덱스를 설계했습니다.
-
-**검증**
-
-동일 SQL을 인덱스 적용 전후 각각 5회 실행한 결과 목록 SQL 중앙값은 185ms에서 0.178ms로, COUNT SQL은 84.5ms에서 29.4ms로 감소했습니다. 동일 API를 k6로 각각 3회 측정한 결과 p95 중앙값은 1,333.63ms에서 39.86ms로 약 97% 감소했으며, 적용 후 dropped iteration과 HTTP 실패는 모두 0건이었습니다.
-
 ## 테스트
 
 Docker와 Testcontainers를 이용해 MySQL 8.4 환경에서 테스트했으며 전체 테스트가 통과했습니다.
@@ -326,24 +297,24 @@ k6 run -e RATE=100 -e DURATION=3m performance/redis-cache/k6/scripts/product-rea
 k6 run -e TEST_TYPE=load -e RATE=10 -e DURATION=2m performance/index-tuning/k6/scripts/product-search.js
 ```
 
-## 실행 방법
+## 로컬 실행
 
 ### Docker 구성
 
 | 구성 요소 | 역할 | 호스트 포트 | 데이터 유지 |
 | --- | --- | ---: | --- |
 | MySQL 8.4 | 원본 데이터베이스 | `3307` | `mysql_data` 볼륨 |
-| Redis 7 | 상품 조회 캐시 | `6379` | `redis_data` 볼륨 |
+| Redis 7 | 상품 조회 캐시 | `7379` | `redis_data` 볼륨 |
 | Frontend | 프론트엔드 서비스 | `3000` | 해당 없음 |
 | Backend image | Spring Boot 애플리케이션 이미지 | `8080` | 해당 없음 |
 
-현재 `compose.yaml`은 MySQL, Redis, Frontend를 실행합니다. Backend는 Compose 서비스에 포함하지 않았으며, 루트 `Dockerfile`로 이미지를 별도 빌드할 수 있습니다.
+루트의 로컬 개발용 `compose.yaml`은 MySQL, Redis, Frontend를 실행합니다. AWS 실행 구성은 `deploy/aws/compose.yaml`로 분리했습니다. Backend는 Compose 서비스에 포함하지 않았으며, 루트 `Dockerfile`로 이미지를 별도 빌드할 수 있습니다.
 
 - MySQL과 Redis에 `healthcheck`를 적용해 컨테이너 상태를 확인합니다.
 - MySQL과 Redis 데이터는 named volume에 저장해 컨테이너를 재생성해도 유지합니다.
 - 호스트 포트는 `127.0.0.1`에 바인딩해 로컬 환경에서만 접근하도록 구성했습니다.
 - Backend 이미지는 JDK 빌드 단계와 JRE 실행 단계를 분리한 멀티스테이지 빌드를 사용하며, 런타임에서는 비루트 `spring` 사용자로 실행합니다.
-- `.dockerignore`에서 빌드 결과물, IDE 설정, 성능 측정 자료, 환경변수 파일과 Frontend를 제외해 Backend 이미지의 빌드 컨텍스트를 줄였습니다.
+- 실제 환경변수·인증서·개인 키는 저장소와 이미지에 포함하지 않도록 관리합니다.
 
 ### Docker Compose로 인프라와 Frontend 실행
 
@@ -362,11 +333,11 @@ docker compose up -d mysql redis frontend
 docker compose ps
 ```
 
-Compose 환경에서 MySQL은 호스트의 `3307` 포트, Redis는 `6379` 포트, Frontend는 `3000` 포트로 접근할 수 있습니다.
+Compose 환경에서 MySQL은 호스트의 `3307` 포트, Redis는 `7379` 포트, Frontend는 `3000` 포트로 접근할 수 있습니다.
 
 ```text
 MySQL: 127.0.0.1:3307
-Redis: 127.0.0.1:6379
+Redis: 127.0.0.1:7379
 Frontend: http://localhost:3000
 ```
 
@@ -391,7 +362,7 @@ docker compose down -v
 docker build -t shop-backend .
 ```
 
-Backend 컨테이너를 실행할 때는 MySQL, Redis, JWT 설정 등 애플리케이션에 필요한 환경변수를 실행 환경에 맞게 전달해야 합니다. 현재 Backend는 Compose 네트워크에 포함되어 있지 않으므로, 로컬 실행이 기본 경로입니다.
+Backend 컨테이너를 실행할 때는 MySQL, Redis, JWT 설정 등 애플리케이션에 필요한 환경변수를 실행 환경에 맞게 전달해야 합니다. 로컬 개발용 Compose에는 Backend가 포함되지 않으므로 아래 `bootRun`으로 실행합니다. AWS용 Compose에서는 Backend도 컨테이너로 실행합니다.
 
 ### 사전 준비
 
@@ -411,10 +382,10 @@ DB_PASSWORD=your_mysql_password
 MYSQL_ROOT_PASSWORD=your_mysql_root_password
 JWT_SECRET=your_base64_encoded_secret_key
 REDIS_HOST=localhost
-REDIS_PORT=6379
+REDIS_PORT=7379
 ```
 
-`.env`에는 비밀번호와 JWT Secret이 포함되므로 Git에 커밋하지 않습니다. `MYSQL_ROOT_PASSWORD`는 Docker Compose의 MySQL 초기화에 사용합니다. Spring Boot를 로컬에서 실행할 때 `.env`가 자동으로 애플리케이션 환경변수에 주입되는 것은 아니므로, IDE나 셸의 실행 환경에도 필요한 값을 별도로 설정해야 합니다.
+`.env`에는 비밀번호와 JWT Secret이 포함되므로 Git에 커밋하지 않습니다. `MYSQL_ROOT_PASSWORD`는 Docker Compose의 MySQL 초기화에 사용합니다. 현재 `application.yaml`은 `optional:file:.env[.properties]`를 가져옵니다. 프로젝트 루트를 작업 디렉터리로 실행하면 해당 파일을 설정값으로 읽으며, OS 환경변수와는 별개입니다. 다른 작업 디렉터리에서 실행하면 IDE·셸에 값을 전달하거나 설정 파일 경로를 맞춰야 합니다.
 
 ### Backend
 
@@ -461,12 +432,17 @@ shop
 │     ├─ config
 │     ├─ exception
 │     └─ security
+├─ .github/workflows/deploy.yml
+├─ deploy/aws
+│  ├─ compose.yaml
+│  └─ deploy.sh
 ├─ performance
 │  ├─ redis-cache
 │  └─ index-tuning
 │     ├─ explain-analyze
 │     └─ k6
 ├─ src/main/resources/db/migration
+│  ├─ V1__create_initial_schema.sql
 │  └─ V3__add_product_composite-index.sql
 ├─ src/test/java/com/taejun/shop
 │  ├─ domain
@@ -484,12 +460,13 @@ shop
 
 ## 향후 개선 계획
 
+- 공개 운영 시 도메인·HTTPS 및 환경별 쿠키 설정 적용
+- 실행 환경의 메모리·디스크 사용량을 지속 측정하고 배포 구성 변경도 코드와 일치하도록 관리
+
 - Refresh Token 해싱 저장
 - 운영 환경별 CORS 및 쿠키 보안 설정 분리
-- Flyway가 전체 스키마 변경의 단일 주체가 되도록 초기 마이그레이션을 정리하고 Hibernate `ddl-auto=validate`로 전환
 - 허용된 필드만 사용할 수 있도록 상품 정렬 조건 제한
 - 동일 조건의 Redis 적용 전·후 k6 재측정과 병목 구간 프로파일링
 - Redis 무효화 실패 작업의 Outbox 저장 및 재시도 처리
 - Redis 장애 통합 테스트와 장애 중 MySQL 과부하를 막기 위한 타임아웃·트래픽 보호 전략 보완
-- CI에서 Testcontainers 통합 테스트 자동 실행
 - 운영 환경을 고려한 만료 주문 다중 인스턴스 처리 전략 보완
